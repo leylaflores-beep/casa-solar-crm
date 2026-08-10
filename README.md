@@ -17,7 +17,9 @@ Ejecuta `npm run build`. Los archivos finales se generarán en la carpeta `dist`
 
 El CRM está conectado al proyecto `crm-casa-solar` y guarda los datos compartidos en la colección `crm_data` de Firestore. El usuario activo se guarda únicamente en el navegador de cada dispositivo.
 
-Para activar las reglas incluidas, abre Firestore Database, entra en **Reglas**, copia el contenido de `firestore.rules` y pulsa **Publicar**. Estas reglas iniciales permiten acceso al equipo sin inicio de sesión individual; se recomienda agregar Firebase Authentication antes de publicar el enlace de forma abierta.
+Para activar las reglas incluidas, abre Firestore Database, entra en **Reglas**, copia el contenido de `firestore.rules` y pulsa **Publicar**. Las reglas exigen que el usuario haya iniciado sesión con una cuenta creada en Firebase Authentication.
+
+Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol de Jefe. Las demás cuentas autorizadas tienen rol de Vendedor. El sistema no permite registro público; las cuentas se crean desde Firebase Authentication.
 
 ## GitHub Pages
 
