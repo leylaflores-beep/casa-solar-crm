@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Reglas iniciales para el CRM. Permiten que el equipo use el sistema
+    // mientras se implementa autenticación individual en una siguiente etapa.
+    match /crm_data/{document} {
+      allow read, write: if true;
+    }
+  }
+}
