@@ -1,0 +1,179 @@
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+
+const money = (value) => `Q ${Number(value || 0).toLocaleString("es-GT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const prettyDate = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDateString("es-GT", { day: "numeric", month: "long", year: "numeric" }) : "-";
+
+export function downloadQuotePdf(quote, contact, logo) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const red = [227, 6, 19];
+  const dark = [31, 36, 39];
+
+  doc.setFillColor(...dark);
+  doc.rect(0, 0, 52, 297, "F");
+  doc.setFillColor(...red);
+  doc.rect(0, 282, 52, 15, "F");
+  doc.addImage(logo, "PNG", 62, 10, 70, 12);
+  doc.setDrawColor(205);
+  doc.line(60, 28, 198, 28);
+
+  doc.setTextColor(255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("ESPECIALISTAS EN", 9, 19);
+  doc.text("ENERGÍA SOLAR", 9, 25);
+  doc.setFontSize(7);
+  const sidebar = [
+    ["COTIZACIÓN", quote.numero],
+    ["FECHA", prettyDate(quote.fecha)],
+    ["VÁLIDA HASTA", prettyDate(quote.validaHasta)],
+    ["CLIENTE", contact?.nombre || quote.contactoNombre || ""],
+    ["NIT", contact?.nit || "C/F"],
+    ["DIRECCIÓN", contact?.direccion || ""],
+  ];
+  let sy = 42;
+  sidebar.forEach(([label, value]) => {
+    doc.setTextColor(...red); doc.setFont("helvetica", "bold"); doc.text(label, 9, sy);
+    doc.setTextColor(255); doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(String(value || "-"), 37);
+    doc.text(lines, 9, sy + 6);
+    sy += Math.max(20, lines.length * 4 + 12);
+  });
+  doc.setTextColor(255); doc.setFontSize(7);
+  doc.text(["CASA SOLAR", "Plaza Pericentro Zona 8,", "Quetzaltenango", "PBX 7767 5949", "info@casasolar.com.gt", "", "ASESOR(A) DE VENTAS", quote.vendedor || ""], 9, 226);
+  doc.setFont("helvetica", "bold"); doc.text("www.casasolar.com.gt", 10, 291);
+
+  doc.setTextColor(...dark);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(18);
+  doc.text("PROPUESTA COMERCIAL", 62, 46);
+  doc.setTextColor(...red); doc.text("ENERGÍA SOLAR", 62, 56);
+  doc.setTextColor(75); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+  doc.text(doc.splitTextToSize("Gracias por considerarnos para su proyecto. Presentamos soluciones de energía renovable con productos de calidad, garantía y atención personalizada.", 133), 62, 68);
+
+  const body = quote.items.map(item => [
+    item.cantidad,
+    `${item.descripcion || item.productoNombre || "Producto"}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
+    money(item.precioLista || item.precioUnitario),
+    money(item.precioUnitario),
+    money(item.cantidad * item.precioUnitario),
+  ]);
+
+  autoTable(doc, {
+    startY: 83,
+    margin: { left: 60, right: 12 },
+    head: [["CANT.", "DESCRIPCIÓN", "PRECIO", "COTIZADO", "TOTAL"]],
+    body,
+    theme: "grid",
+    styles: { font: "helvetica", fontSize: 7.5, cellPadding: 2.6, textColor: dark },
+    headStyles: { fillColor: dark, textColor: 255, fontStyle: "bold" },
+    columnStyles: { 0: { cellWidth: 13, halign: "center" }, 1: { cellWidth: 60 }, 2: { cellWidth: 23, halign: "right" }, 3: { cellWidth: 23, halign: "right" }, 4: { cellWidth: 25, halign: "right", fillColor: [252, 232, 233], fontStyle: "bold" } },
+  });
+
+  let y = doc.lastAutoTable.finalY + 9;
+  if (y > 245) { doc.addPage(); y = 22; }
+  doc.setFillColor(...red); doc.rect(150, y - 6, 48, 13, "F");
+  doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text(`TOTAL ${money(quote.total)}`, 194, y + 2, { align: "right" });
+  doc.setTextColor(...dark); doc.setFontSize(8); doc.setFont("helvetica", "bold");
+  doc.text("CONDICIONES COMERCIALES", 62, y + 19);
+  doc.setFont("helvetica", "normal"); doc.setTextColor(80);
+  const conditions = [
+    "- Precios expresados en quetzales con IVA incluido.",
+    "- Vigencia: 30 días calendario a partir de la fecha de emisión.",
+    "- Disponibilidad sujeta a existencia al confirmar el pedido.",
+    `- ${quote.notas || "Garantía según el producto y condiciones comerciales de Casa Solar."}`,
+  ];
+  doc.text(conditions, 62, y + 26);
+  doc.setDrawColor(...red); doc.line(60, 275, 198, 275);
+  doc.setTextColor(...red); doc.setFont("helvetica", "bold"); doc.text("ACEPTAMOS TARJETAS DE CRÉDITO, DÉBITO Y TRANSFERENCIA", 62, 283);
+  doc.save(`${quote.numero}-${(contact?.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+}
+
+export function downloadOrderPdf(quote, contact, logo) {
+  const doc = new jsPDF({ unit: "mm", format: [216, 330] });
+  const black = [20, 20, 20];
+  doc.addImage(logo, "PNG", 12, 10, 64, 11);
+  doc.setTextColor(...black); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text("O R D E N  D E  P E D I D O", 108, 21, { align: "center" });
+  doc.setFontSize(7); doc.text("CORPORACIÓN THERMAL S. A.  |  Plaza Pericentro zona 8, Quetzaltenango  |  PBX 7767 5949", 12, 31);
+  doc.setDrawColor(...black); doc.setLineWidth(0.6); doc.line(12, 36, 204, 36);
+  doc.setFontSize(9); doc.text(`N.º ${quote.numero.replace("CS-", "OP-")}`, 202, 29, { align: "right" });
+
+  const section = (x, y, w, title) => {
+    doc.setFillColor(...black); doc.rect(x, y, w, 7, "F");
+    doc.setTextColor(255); doc.setFontSize(8); doc.text(title, x + w / 2, y + 4.7, { align: "center" });
+    doc.setTextColor(...black);
+  };
+  const lineField = (label, value, x, y, w) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.text(label, x, y);
+    doc.setFont("helvetica", "normal"); doc.setDrawColor(160); doc.rect(x + 27, y - 4, w - 27, 6);
+    if (value) doc.text(doc.splitTextToSize(String(value), w - 30), x + 29, y);
+  };
+
+  section(12, 41, 92, "PROGRAMACIÓN");
+  lineField("Fecha de pedido", prettyDate(quote.fecha), 15, 53, 86);
+  lineField("Asesor de ventas", quote.vendedor, 15, 63, 86);
+  lineField("Fecha instalación", "", 15, 73, 86);
+  lineField("Horario", "Mañana [ ]       Tarde [ ]", 15, 83, 86);
+
+  section(108, 41, 96, "DATOS DEL CLIENTE");
+  lineField("Nombre", contact?.nombre, 111, 53, 90);
+  lineField("Dirección", contact?.direccion, 111, 63, 90);
+  lineField("Departamento", contact?.departamento, 111, 73, 90);
+  lineField("Teléfono", contact?.telefono, 111, 83, 90);
+  lineField("NIT", contact?.nit, 111, 93, 90);
+
+  section(12, 93, 92, "DESCRIPCIÓN DEL PRODUCTO");
+  const orderItems = quote.items.slice(0, 16).map(item => [
+    `${item.descripcion || item.productoNombre || "Producto"}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
+    item.cantidad,
+    money(item.precioUnitario),
+  ]);
+  while (orderItems.length < 16) orderItems.push(["", "", ""]);
+  autoTable(doc, {
+    startY: 100, margin: { left: 12, right: 112 },
+    head: [["Producto / servicio", "Cant.", "Precio (Q)"]], body: orderItems,
+    theme: "grid", styles: { fontSize: 6, cellPadding: 1.15, minCellHeight: 6 },
+    headStyles: { fillColor: [235, 235, 235], textColor: black },
+    columnStyles: { 0: { cellWidth: 53 }, 1: { cellWidth: 14, halign: "center" }, 2: { cellWidth: 25, halign: "right" } },
+  });
+  const tableEnd = doc.lastAutoTable.finalY;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.text(`TOTAL: ${money(quote.total)}`, 101, tableEnd + 6, { align: "right" });
+
+  section(108, 103, 96, "DATOS DE FACTURACIÓN");
+  lineField("Nombre", contact?.nombre, 111, 115, 90);
+  lineField("Dirección", contact?.direccion, 111, 125, 90);
+  lineField("Departamento", contact?.departamento, 111, 135, 90);
+  lineField("Teléfono", contact?.telefono, 111, 145, 90);
+  lineField("NIT", contact?.nit, 111, 155, 90);
+
+  section(108, 164, 96, "DATOS TÉCNICOS");
+  const technical = [
+    "Niveles de la casa:  1 [ ]   2 [ ]   3 [ ]   4 [ ]   Otros: __________",
+    "Material del techo:  Lámina [ ]   Terraza [ ]   Teja [ ]",
+    "Tipo de techo:  Plano [ ]   1 agua [ ]   2 aguas [ ]   Varias [ ]",
+    "Tubería disponible:  Caliente Sí [ ] No [ ]   Fría Sí [ ] No [ ]",
+    "Presión de agua:  Baja [ ]   Media [ ]   Alta [ ]   Muy alta [ ]",
+    "Bomba hidroneumática:  Sí [ ]  No [ ]",
+    "Depósito para agua:  Sí [ ]  No [ ]   Altura: __________",
+    "Conecta al depósito:  Sí [ ]  No [ ]",
+    "Gradas al último nivel:  Sí [ ]  No [ ]",
+    "¿Entra camión a la casa?:  Sí [ ]  No [ ]",
+  ];
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+  technical.forEach((text, index) => doc.text(text, 112, 176 + index * 8));
+
+  section(12, 222, 92, "ABONOS");
+  const payments = Array.from({ length: 6 }, () => ["", "", ""]);
+  autoTable(doc, { startY: 229, margin: { left: 12, right: 112 }, head: [["Fecha", "Abono (Q)", "Saldo (Q)"]], body: payments, theme: "grid", styles: { fontSize: 6, minCellHeight: 7 }, headStyles: { fillColor: [235,235,235], textColor: black } });
+
+  section(108, 250, 96, "FORMA DE PAGO");
+  doc.setFontSize(6.5); doc.setFont("helvetica", "normal");
+  ["Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque", "Contado", "Transferencia"].forEach((p, i) => doc.text(`${p}:  Abono __________  Saldo __________`, 112, 262 + i * 8));
+
+  section(12, 286, 92, "PROMOCIÓN / OBSERVACIONES");
+  doc.setDrawColor(160); doc.rect(12, 293, 92, 23);
+  doc.setFontSize(6); doc.text(doc.splitTextToSize(quote.notas || "", 86), 15, 299);
+  doc.setFontSize(5.5); doc.text("Los pagos realizados no son reembolsables. Equipo sujeto a disponibilidad. Cambios de instalación pueden generar costos adicionales.", 108, 309, { maxWidth: 94 });
+  doc.line(18, 322, 65, 322); doc.line(84, 322, 131, 322); doc.line(150, 322, 198, 322);
+  doc.setFontSize(6); doc.text("Firma del cliente", 41, 326, { align: "center" }); doc.text("Firma del asesor", 107, 326, { align: "center" }); doc.text("Firma de Operaciones", 174, 326, { align: "center" });
+  doc.save(`Orden-${quote.numero}-${(contact?.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+}

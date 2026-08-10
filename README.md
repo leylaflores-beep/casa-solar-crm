@@ -24,3 +24,15 @@ Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol
 ## GitHub Pages
 
 El proyecto incluye un flujo automático en `.github/workflows/deploy.yml`. Después de subir todos los archivos a GitHub, abre **Settings → Pages**, selecciona **GitHub Actions** como fuente y espera a que termine el proceso de publicación.
+
+## Cotizaciones y órdenes de pedido
+
+- Numeración automática anual `CS-AAAA-0001`.
+- Vigencia de 30 días y precios con IVA incluido.
+- Varias líneas por cotización con producto, descripción, tamaño, cantidad, precio de lista y precio cotizado.
+- PDF comercial basado en el formato corporativo negro, blanco y rojo de Casa Solar.
+- Orden de pedido tamaño oficio con 16 líneas; el tamaño aparece junto a “Calentador solar”.
+- Acciones para descargar PDF, abrir WhatsApp, abrir correo y generar la orden.
+- Registro interno en Firebase de fecha, hora, canal, destinatario y usuario que realizó cada acción.
+
+WhatsApp y el programa de correo no permiten adjuntar automáticamente archivos desde una página web. Primero se descarga el PDF y luego se adjunta manualmente antes de enviar; el CRM conserva el registro interno de la acción.
