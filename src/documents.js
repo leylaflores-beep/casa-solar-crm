@@ -110,6 +110,8 @@ export function downloadQuotePdf(quote, contact, logo) {
     "- Precios expresados en quetzales con IVA incluido.",
     "- Vigencia: 30 días calendario a partir de la fecha de emisión.",
     "- Disponibilidad sujeta a existencia al confirmar el pedido.",
+    `- Promoción aplicada: ${quote.promocion || "Sin promoción"}.`,
+    `- Garantía del producto: ${quote.garantia || (quote.garantiaAnios ? `${quote.garantiaAnios} años` : "Según condiciones del producto")}.`,
     `- ${quote.notas || "Garantía según el producto y condiciones comerciales de Casa Solar."}`,
   ];
   doc.text(conditions, 62, y + 26);
@@ -182,16 +184,26 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
     `Niveles de la casa: ${order.niveles || "Sin indicar"}`,
     `Material del techo: ${order.materialTecho || "Sin indicar"}`,
     `Tipo de techo: ${order.tipoTecho || "Sin indicar"}`,
-    `Tubería disponible: Caliente ${order.tuberiaCaliente || "-"} / Fría ${order.tuberiaFria || "-"}`,
+    `Tubería caliente: ${order.tuberiaCaliente || "-"} / Medida: ${order.medidaTuberiaCaliente || "-"}`,
+    `Tubería fría: ${order.tuberiaFria || "-"} / Medida: ${order.medidaTuberiaFria || "-"}`,
     `Presión de agua: ${order.presionAgua || "Sin indicar"}`,
+    `Otro calentador: ${order.otroCalentador || "No"} / ${order.detalleOtroCalentador || "Sin detalle"}`,
+    `Variación de presión: ${order.variacionPresion || "No"} / ${order.detalleVariacionPresion || "Sin detalle"}`,
+    `Instalaciones adicionales: ${order.instalacionesAdicionales || "Ninguna"}`,
+    `Distancia adicional: ${order.distanciaAdicional || "0"} metros`,
     `Bomba hidroneumática: ${order.bomba || "Sin indicar"}`,
     `Depósito para agua: ${order.deposito || "-"} / Altura: ${order.alturaDeposito || "-"}`,
     `Conecta al depósito: ${order.conectaDeposito || "Sin indicar"}`,
     `Gradas al último nivel: ${order.gradas || "Sin indicar"}`,
     `¿Entra camión a la casa?: ${order.entraCamion || "Sin indicar"}`,
   ];
-  doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
-  technical.forEach((text, index) => doc.text(text, 112, 176 + index * 8));
+  doc.setFont("helvetica", "normal"); doc.setFontSize(5.7);
+  let technicalY = 173;
+  technical.forEach(text => {
+    const lines = doc.splitTextToSize(text, 89).slice(0, 2);
+    doc.text(lines, 112, technicalY);
+    technicalY += Math.max(4.2, lines.length * 3.4);
+  });
 
   section(12, 222, 92, "ABONOS");
   const payments = [[prettyDate(quote.fecha), order.abono ? money(order.abono) : "", order.saldo ? money(order.saldo) : ""], ...Array.from({ length: 5 }, () => ["", "", ""])];
