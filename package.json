@@ -14,9 +14,9 @@
     "jspdf": "latest",
     "jspdf-autotable": "latest",
     "lucide-react": "latest",
-    "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
-  },
-  "devDependencies": {}
+    "react-dom": "latest",
+    "vite": "latest",
+    "xlsx": "^0.18.5"
+  }
 }

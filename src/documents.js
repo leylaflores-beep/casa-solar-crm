@@ -8,6 +8,12 @@ const itemName = (item) => {
   if (description && description.toLowerCase() !== "producto") return description;
   return item?.productoNombre || item?.producto || item?.nombre || item?.productoId || "Producto sin especificar";
 };
+const itemDescription = (item) => [
+  itemName(item),
+  item?.tamano ? `Tamaño: ${item.tamano}` : "",
+  item?.altura ? `Altura: ${item.altura}` : "",
+  item?.compatibilidad ? `Compatible con: ${item.compatibilidad}` : "",
+].filter(Boolean).join(" - ");
 const savePdf = (doc, filename) => {
   const blob = doc.output("blob");
   const url = URL.createObjectURL(blob);
@@ -69,7 +75,7 @@ export function downloadQuotePdf(quote, contact, logo) {
 
   const body = quote.items.map(item => [
     item.cantidad,
-    `${itemName(item)}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
+    itemDescription(item),
     money(item.precioLista || item.precioUnitario),
     money(item.precioUnitario),
     money(item.cantidad * item.precioUnitario),
@@ -142,7 +148,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
 
   section(12, 93, 92, "DESCRIPCIÓN DEL PRODUCTO");
   const orderItems = quote.items.slice(0, 16).map(item => [
-    `${itemName(item)}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
+    itemDescription(item),
     item.cantidad,
     money(item.precioUnitario),
   ]);

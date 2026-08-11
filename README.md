@@ -21,6 +21,16 @@ Para activar las reglas incluidas, abre Firestore Database, entra en **Reglas**,
 
 Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol de Jefe. Las demás cuentas autorizadas tienen rol de Vendedor. El sistema no permite registro público; las cuentas se crean desde Firebase Authentication.
 
+## Clientes anteriores y campañas
+
+- En **Contactos → Importar Excel**, una jefa puede cargar archivos `.xls`, `.xlsx` o `.csv`, revisar posibles duplicados y decidir si omitirlos o actualizarlos.
+- Cada contacto incluye el permiso de promociones: pendiente, aceptado o no contactar.
+- En **Equipo** se registra el número de WhatsApp propio de cada vendedor.
+- En **Campañas** se crea un enlace individual por cliente y se registra vendedor, número del vendedor, fecha de envío, acceso, solicitud y uso del beneficio.
+- Las imágenes nuevas se comprimen y se guardan en Firestore; no se utiliza Firebase Storage ni funciones de pago.
+
+Para que el seguimiento público funcione, publique también el archivo `firestore.rules` desde **Firebase → Firestore Database → Reglas**.
+
 ## GitHub Pages
 
 El proyecto incluye un flujo automático en `.github/workflows/deploy.yml`. Después de subir todos los archivos a GitHub, abre **Settings → Pages**, selecciona **GitHub Actions** como fuente y espera a que termine el proceso de publicación.
