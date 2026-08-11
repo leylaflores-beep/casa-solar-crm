@@ -4,7 +4,7 @@ import {
   ClipboardList, LayoutDashboard, Plus, Search, X, LogOut, Settings,
   TrendingUp, Wrench, Trash2, Edit3, ChevronRight, CheckCircle2, Clock,
   ArrowLeft, Package, Filter, Download, Mail, ShoppingCart, Send, Megaphone, Upload,
-  Calculator, MapPin, BadgePercent, ShieldCheck
+  Calculator, MapPin, BadgePercent, ShieldCheck, BarChart3
 } from "lucide-react";
 import {
   getSharedData,
@@ -173,15 +173,20 @@ function LoginScreen({ onLogin }) {
 }
 
 function Sidebar({ tab, setTab, currentUser, onLogout }) {
-  const items = [
+  const operationalRole = ["Técnico", "Programación", "Bodega", "Facturación"].includes(currentUser.rol);
+  const items = operationalRole ? [
+    { id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench },
+  ] : [
     { id: "dashboard", label: "Panel", icon: LayoutDashboard },
     { id: "contactos", label: "Contactos", icon: Users2 },
     { id: "calculadora", label: "Calculadora de rutas", icon: Calculator },
     { id: "cotizaciones", label: "Cotizaciones", icon: FileText },
+    { id: "reportes", label: "Reportes de ventas", icon: BarChart3 },
     { id: "seguimientos", label: "Seguimientos", icon: ClipboardList },
     { id: "campanas", label: "Campañas", icon: Megaphone },
     { id: "catalogo", label: "Catálogo", icon: Package },
   ];
+  if (currentUser.rol === "Jefe") items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
   if (currentUser.rol === "Jefe") items.push({ id: "equipo", label: "Equipo", icon: Settings });
 
   return (
@@ -686,25 +691,36 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
   );
 }
 
-function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
+function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], onClose, onSave, onGenerate, onAdvance, advanceLabel }) {
   const draftKey = `casasolar:draft:orden:${cotizacion.id || cotizacion.numero}`;
   const defaultForm = {
     fechaInstalacion: "", horario: "Mañana", direccion: contacto?.direccion || "",
     departamento: contacto?.departamento || "", telefono: contacto?.telefono || "",
     nit: contacto?.nit || "", niveles: "1", materialTecho: "Lámina", tipoTecho: "",
     tuberiaCaliente: "Sí", tuberiaFria: "Sí", presionAgua: "Media",
-    medidaTuberiaCaliente: "", medidaTuberiaFria: "", otroCalentador: "No",
+    medidaTuberiaCaliente: "CPVC 1/2 pulgada", medidaTuberiaFria: "PVC 1/2 pulgada", otroCalentador: "No",
     detalleOtroCalentador: "", variacionPresion: "No", detalleVariacionPresion: "",
     instalacionesAdicionales: "", distanciaAdicional: "",
     bomba: "No", deposito: "Sí", alturaDeposito: "", conectaDeposito: "Sí",
     gradas: "Sí", entraCamion: "Sí", formaPago: "Transferencia",
     abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
     garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
+    tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
+    ...(cotizacion.ordenPedido || {}),
   };
-  const [form, setForm] = useState(() => readDraft(draftKey, defaultForm));
+  const [form, setForm] = useState(() => {
+    const draft = readDraft(draftKey, defaultForm);
+    if (!["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"].includes(draft.medidaTuberiaCaliente)) draft.medidaTuberiaCaliente = "CPVC 1/2 pulgada";
+    if (!["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"].includes(draft.medidaTuberiaFria)) draft.medidaTuberiaFria = "PVC 1/2 pulgada";
+    return draft;
+  });
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
   const generateOrder = () => { clearDraft(draftKey); onGenerate(form); };
+  const saveOrder = () => { clearDraft(draftKey); onSave?.(form); };
+  const isTechnician = currentUser?.rol === "Técnico";
+  const canAssignTechnician = ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
+  const technicians = vendedores.filter(user => user.rol === "Técnico");
   const field = (label, key, type = "text") => (
     <div><label className="field-label">{label}</label><input className="input" type={type} value={form[key]} onChange={e => set(key, e.target.value)} /></div>
   );
@@ -716,16 +732,30 @@ function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-head"><div><h3>Orden de pedido {cotizacion.ordenNumero || ""}</h3><small>Basada en {cotizacion.numero} · {contacto?.nombre}</small><small className="draft-note">Borrador guardado automáticamente</small></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>
         <div className="modal-body">
+          <div className="order-evaluation-summary">
+            <div className="order-summary-head"><ClipboardList size={18} /><div><h4>Información para evaluación técnica</h4><p>Datos tomados automáticamente de la cotización.</p></div></div>
+            <div className="order-summary-grid">
+              <div><span>Cliente</span><strong>{contacto?.nombre || cotizacion.contactoNombre || "Sin registrar"}</strong></div>
+              <div><span>Teléfono</span><strong>{contacto?.telefono || "Sin registrar"}</strong></div>
+              <div><span>Dirección</span><strong>{contacto?.direccion || "Sin registrar"}</strong></div>
+              <div><span>Departamento</span><strong>{contacto?.departamento || "Sin registrar"}</strong></div>
+            </div>
+            <div className="quoted-equipment"><span>Equipo cotizado</span>{(cotizacion.items || []).map(item => <div key={item.id || `${item.productoId}-${item.descripcion}`}><strong>{item.cantidad || 1} × {nombreItem(item)}</strong>{item.tamano && <small>{item.tamano}</small>}</div>)}</div>
+          </div>
+          <h4>Asignación de visita física</h4>
+          <div className="form-grid">
+            {field("Departamento de la visita", "departamentoVisita")}
+            <div><label className="field-label">Técnico asignado</label><select className="input" disabled={!canAssignTechnician} value={form.tecnicoAsignadoEmail} onChange={e => { const tech = technicians.find(item => item.email === e.target.value); setForm(prev => ({ ...prev, tecnicoAsignadoEmail: e.target.value, tecnicoAsignadoNombre: tech?.nombre || "" })); }}><option value="">Sin asignar</option>{technicians.map(tech => <option key={tech.id || tech.email} value={tech.email}>{tech.nombre}{tech.departamentosCobertura ? ` · ${tech.departamentosCobertura}` : ""}</option>)}</select></div>
+          </div>
           <h4>Programación e instalación</h4>
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
           <h4>Datos técnicos</h4>
-          <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{field("Medida tubería caliente", "medidaTuberiaCaliente")}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{field("Medida tubería fría", "medidaTuberiaFria")}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>
-          <h4>Pago y observaciones</h4>
-          <div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div>
-          <div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div>
+          <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>
+          <h4>{isTechnician ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
+          {!isTechnician && <><div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div><div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
           <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
         </div>
-        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button><button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button></div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnician && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
       </div>
     </div>
   );
@@ -778,7 +808,7 @@ function DiscountAuthorizationModal({ cotizacion, currentUser, onClose, onUpdate
   </div></div>;
 }
 
-function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate, ordenSugerida }) {
+function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUpdate, ordenSugerida }) {
   const [showOrder, setShowOrder] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
@@ -825,12 +855,18 @@ function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate, ordenS
           {(cotizacion.envios || []).length} registro{cotizacion.envios.length === 1 ? "" : "s"}
         </span>
       )}
-      {showOrder && <OrderFormModal cotizacion={{ ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida }} contacto={contacto} onClose={() => setShowOrder(false)} onGenerate={(form) => {
+      {showOrder && <OrderFormModal cotizacion={{ ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida }} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onClose={() => setShowOrder(false)} onSave={(form) => {
+          const quoteForOrder = { ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida };
+          const assigned = Boolean(form.tecnicoAsignadoEmail);
+          const history = [...(quoteForOrder.ordenFlujo?.historial || []), { accion: "Orden guardada", usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+          onUpdate({ ...quoteForOrder, ordenPedido: form, ordenFlujo: { ...(quoteForOrder.ordenFlujo || {}), etapa: assigned ? "Técnico" : "Pendiente de asignación", historial: history } });
+          setShowOrder(false);
+        }} onGenerate={(form) => {
         try {
           const quoteForOrder = { ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida };
           downloadOrderPdf(quoteForOrder, contacto, LOGO_FULL, form);
           const registro = { id: uid(), canal: "Orden de pedido", destinatario: "Descarga interna", fechaHora: new Date().toISOString(), usuario: currentUser.nombre };
-          onUpdate({ ...quoteForOrder, envios: [...(quoteForOrder.envios || []), registro] });
+          onUpdate({ ...quoteForOrder, ordenPedido: form, envios: [...(quoteForOrder.envios || []), registro] });
           setShowOrder(false);
         } catch (error) {
           console.error("No se pudo generar la orden:", error);
@@ -1005,7 +1041,7 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
                   <td>{c.items.map(nombreItem).join(", ")}</td>
                   <td>{fmtMoney(c.total)}</td>
                   <td><Badge estado={c.estado} /></td>
-                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
+                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
                 </tr>
               ))}
             </tbody>
@@ -1095,7 +1131,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
                       {ESTADOS_COTIZACION.map(e => <option key={e} value={e}>{e}</option>)}
                     </select>
                   </td>
-                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
+                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
                 </tr>
               );
             })}
@@ -1173,6 +1209,7 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rol, setRol] = useState("Vendedor");
+  const [departamentosCobertura, setDepartamentosCobertura] = useState("");
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
   const leylaCanCreate = String(currentUser.email || "").toLowerCase() === "leyla.flores@gmail.com";
@@ -1185,9 +1222,9 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
     setCreating(true);
     setMessage("");
     try {
-      await onCreateAccess({ nombre: nombre.trim(), email: email.trim(), password, rol, telefono: telefono.trim() });
+      await onCreateAccess({ nombre: nombre.trim(), email: email.trim(), password, rol, telefono: telefono.trim(), departamentosCobertura: departamentosCobertura.trim() });
       setMessage(`Acceso creado correctamente para ${nombre.trim()}.`);
-      setNombre(""); setTelefono(""); setEmail(""); setPassword(""); setRol("Vendedor");
+      setNombre(""); setTelefono(""); setEmail(""); setPassword(""); setRol("Vendedor"); setDepartamentosCobertura("");
     } catch (error) {
       const code = String(error?.code || "");
       if (code.includes("email-already-in-use")) setMessage("Ese correo ya tiene un usuario registrado.");
@@ -1207,8 +1244,9 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
           <label><span className="field-label">Nombre completo</span><input className="input" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre del usuario" /></label>
           <label><span className="field-label">Correo electrónico</span><input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@correo.com" /></label>
           <label><span className="field-label">Contraseña inicial</span><input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /></label>
-          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Jefe</option></select></label>
+          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
           <label><span className="field-label">WhatsApp</span><input className="input" value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="Número opcional" /></label>
+          {rol === "Técnico" && <label><span className="field-label">Departamentos que cubre</span><input className="input" value={departamentosCobertura} onChange={e => setDepartamentosCobertura(e.target.value)} placeholder="Ej. Guatemala, Sacatepéquez y Chimaltenango" /></label>}
         </div>
         {message && <p className={message.includes("correctamente") ? "form-success" : "login-error"}>{message}</p>}
         <button className="btn-primary" onClick={createAccess} disabled={creating}><Plus size={16} /> {creating ? "Creando acceso…" : "Crear usuario"}</button>
@@ -1236,6 +1274,106 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
   );
 }
 
+function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser, onUpdate }) {
+  const [selected, setSelected] = useState(null);
+  const role = currentUser.rol;
+  const visible = cotizaciones.filter(quote => {
+    if (!quote.ordenPedido) return false;
+    const stage = quote.ordenFlujo?.etapa || "Pendiente de asignación";
+    if (role === "Jefe") return true;
+    if (role === "Técnico") return String(quote.ordenPedido.tecnicoAsignadoEmail || "").toLowerCase() === String(currentUser.email || "").toLowerCase();
+    if (role === "Programación") return ["Programación", "Bodega y Facturación", "Completada"].includes(stage);
+    if (["Bodega", "Facturación"].includes(role)) return ["Bodega y Facturación", "Completada"].includes(stage);
+    return false;
+  });
+  const selectedQuote = selected ? cotizaciones.find(item => item.id === selected) : null;
+  const selectedContact = selectedQuote ? contactos.find(item => item.id === selectedQuote.contactoId) : null;
+  const advanceConfig = quote => {
+    const stage = quote.ordenFlujo?.etapa;
+    if (role === "Técnico" && stage === "Técnico") return { label: "Enviar a Programación", stage: "Programación", action: "Evaluación técnica enviada a Programación" };
+    if (role === "Programación" && stage === "Programación") return { label: "Enviar a Bodega y Facturación", stage: "Bodega y Facturación", action: "Programación enviada a Bodega y Facturación" };
+    if (role === "Bodega" && stage === "Bodega y Facturación" && !quote.ordenFlujo?.bodegaCompletado) return { label: "Marcar revisión de Bodega", stage, action: "Revisión de Bodega completada", flag: "bodegaCompletado" };
+    if (role === "Facturación" && stage === "Bodega y Facturación" && !quote.ordenFlujo?.facturacionCompletada) return { label: "Marcar Facturación", stage, action: "Facturación completada", flag: "facturacionCompletada" };
+    return null;
+  };
+  const saveRecord = (quote, form) => {
+    const history = [...(quote.ordenFlujo?.historial || []), { accion: "Registro actualizado", usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: new Date().toISOString() }];
+    onUpdate({ ...quote, ordenPedido: form, ordenFlujo: { ...(quote.ordenFlujo || {}), historial: history } });
+    setSelected(null);
+  };
+  const advance = (quote, form, config) => {
+    const nextFlow = { ...(quote.ordenFlujo || {}), etapa: config.stage, [config.flag || "ultimaAccion"]: config.flag ? true : config.action };
+    if (config.stage === "Bodega y Facturación" && nextFlow.bodegaCompletado && nextFlow.facturacionCompletada) nextFlow.etapa = "Completada";
+    nextFlow.historial = [...(quote.ordenFlujo?.historial || []), { accion: config.action, usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: new Date().toISOString() }];
+    onUpdate({ ...quote, ordenPedido: form, ordenFlujo: nextFlow });
+    setSelected(null);
+  };
+  return <div>
+    <div className="page-head"><h2>Órdenes técnicas</h2><p>Visitas físicas y traslado de información entre Técnico, Programación, Bodega y Facturación.</p></div>
+    <div className="section-card">
+      {visible.length === 0 ? <div className="empty-state">No tienes órdenes asignadas en esta etapa.</div> : <div className="mini-list">{visible.map(quote => {
+        const contact = contactos.find(item => item.id === quote.contactoId);
+        return <button className="technical-order-row" key={quote.id} onClick={() => setSelected(quote.id)}>
+          <div><strong>{quote.ordenNumero || quote.numero.replace("CS-", "OP-")}</strong><span>{contact?.nombre || quote.contactoNombre} · {quote.ordenPedido.departamentoVisita || contact?.departamento || "Sin departamento"}</span></div>
+          <div><span className="badge badge-blue">{quote.ordenFlujo?.etapa || "Pendiente"}</span><small>{quote.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"}</small></div>
+        </button>;
+      })}</div>}
+    </div>
+    {selectedQuote && <OrderFormModal cotizacion={selectedQuote} contacto={selectedContact} currentUser={currentUser} vendedores={vendedores} onClose={() => setSelected(null)} onSave={form => saveRecord(selectedQuote, form)} {...(advanceConfig(selectedQuote) ? { onAdvance: form => advance(selectedQuote, form, advanceConfig(selectedQuote)), advanceLabel: advanceConfig(selectedQuote).label } : {})} />}
+  </div>;
+}
+
+function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
+  const now = new Date();
+  const [periodType, setPeriodType] = useState("Mes");
+  const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [year, setYear] = useState(String(now.getFullYear()));
+  const [from, setFrom] = useState(`${now.getFullYear()}-01-01`);
+  const [to, setTo] = useState(todayISO());
+  const [seller, setSeller] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
+  const sellerUsers = vendedores.filter(user => ["Vendedor", "Jefe"].includes(user.rol || "Vendedor"));
+  const accepted = cotizaciones.filter(quote => {
+    if (quote.estado !== "Aceptada") return false;
+    if (currentUser.rol !== "Jefe" && quote.vendedor !== currentUser.nombre) return false;
+    if (seller !== "todos" && quote.vendedor !== seller) return false;
+    const saleDate = String(quote.fechaVenta || quote.fecha || "").slice(0, 10);
+    if (periodType === "Mes") return saleDate.startsWith(month);
+    if (periodType === "Año") return saleDate.startsWith(year);
+    return (!from || saleDate >= from) && (!to || saleDate <= to);
+  });
+  const total = accepted.reduce((sum, quote) => sum + Number(quote.total || 0), 0);
+  const average = accepted.length ? total / accepted.length : 0;
+  const sellerRows = [...new Set(accepted.map(quote => quote.vendedor || "Sin vendedor"))].map(name => {
+    const rows = accepted.filter(quote => (quote.vendedor || "Sin vendedor") === name);
+    return { name, count: rows.length, total: rows.reduce((sum, quote) => sum + Number(quote.total || 0), 0) };
+  }).sort((a, b) => b.total - a.total);
+  const groups = {};
+  accepted.forEach(quote => {
+    const date = String(quote.fechaVenta || quote.fecha || "").slice(0, 10);
+    const key = periodType === "Año" ? date.slice(5, 7) : date.slice(8, 10);
+    groups[key] = (groups[key] || 0) + Number(quote.total || 0);
+  });
+  const chartData = Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({
+    label: periodType === "Año" ? ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"][Number(key) - 1] : `Día ${Number(key)}`,
+    value,
+  }));
+  const maxChart = Math.max(1, ...chartData.map(item => item.value));
+  return <div className="sales-report printable-report">
+    <div className="page-head report-head"><div><h2>Reportes de ventas</h2><p>Se consideran ventas las cotizaciones con estado “Aceptada”.</p></div><button className="btn-primary" onClick={() => window.print()}><Download size={16} /> Imprimir o guardar PDF</button></div>
+    <div className="section-card report-filters">
+      <label><span className="field-label">Periodo</span><select className="input" value={periodType} onChange={e => setPeriodType(e.target.value)}><option>Mes</option><option>Año</option><option>Rango de fechas</option></select></label>
+      {periodType === "Mes" && <label><span className="field-label">Mes</span><input className="input" type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>}
+      {periodType === "Año" && <label><span className="field-label">Año</span><input className="input" type="number" min="2020" max="2100" value={year} onChange={e => setYear(e.target.value)} /></label>}
+      {periodType === "Rango de fechas" && <><label><span className="field-label">Desde</span><input className="input" type="date" value={from} onChange={e => setFrom(e.target.value)} /></label><label><span className="field-label">Hasta</span><input className="input" type="date" value={to} onChange={e => setTo(e.target.value)} /></label></>}
+      {currentUser.rol === "Jefe" && <label><span className="field-label">Vendedor</span><select className="input" value={seller} onChange={e => setSeller(e.target.value)}><option value="todos">Ventas generales</option>{sellerUsers.map(user => <option key={user.id || user.nombre} value={user.nombre}>{user.nombre}</option>)}</select></label>}
+    </div>
+    <div className="kpi-grid report-kpis"><div className="kpi-card"><div className="kpi-label">Ventas cerradas</div><div className="kpi-value">{accepted.length}</div></div><div className="kpi-card"><div className="kpi-label">Monto vendido</div><div className="kpi-value">{fmtMoney(total)}</div></div><div className="kpi-card"><div className="kpi-label">Venta promedio</div><div className="kpi-value">{fmtMoney(average)}</div></div><div className="kpi-card"><div className="kpi-label">Mejor vendedor</div><div className="kpi-value report-name">{sellerRows[0]?.name || "Sin ventas"}</div></div></div>
+    <div className="section-card"><h3>Rendimiento del periodo</h3>{chartData.length === 0 ? <div className="empty-state">No hay ventas aceptadas en el periodo seleccionado.</div> : <div className="sales-chart">{chartData.map(item => <div className="sales-bar-row" key={item.label}><span>{item.label}</span><div className="sales-bar-track"><div className="sales-bar" style={{ width: `${Math.max(3, item.value / maxChart * 100)}%` }} /></div><strong>{fmtMoney(item.value)}</strong></div>)}</div>}</div>
+    {currentUser.rol === "Jefe" && <div className="section-card"><h3>Ventas por vendedor</h3><table className="table"><thead><tr><th>Vendedor</th><th>Ventas</th><th>Monto total</th><th>Participación</th></tr></thead><tbody>{sellerRows.map(row => <tr key={row.name}><td>{row.name}</td><td>{row.count}</td><td>{fmtMoney(row.total)}</td><td>{total ? `${(row.total / total * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div>}
+    <div className="section-card"><h3>Detalle de ventas</h3><table className="table"><thead><tr><th>Fecha</th><th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>Total</th></tr></thead><tbody>{accepted.map(quote => <tr key={quote.id}><td>{fmtDate(quote.fechaVenta || quote.fecha)}</td><td>{quote.numero}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{fmtMoney(quote.total)}</td></tr>)}</tbody></table></div>
+  </div>;
+}
+
 export default function CasaSolarCRM() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
@@ -1258,6 +1396,7 @@ export default function CasaSolarCRM() {
       setLoading(true);
       const profile = await profileFromFirebaseUser(firebaseUser);
       setCurrentUser(profile);
+      if (["Técnico", "Programación", "Bodega", "Facturación"].includes(profile.rol)) setTab("ordenes-tecnicas");
       const [v, c, q, s, camp] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
@@ -1371,15 +1510,15 @@ export default function CasaSolarCRM() {
     } : null;
     persistCotizaciones([{ ...data, id: uid(), numero, validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre, cliente }, ...cotizaciones]);
   };
-  const updateCotizacionEstado = (id, estado) => persistCotizaciones(cotizaciones.map(c => c.id === id ? { ...c, estado } : c));
-  const updateCotizacion = (updated) => persistCotizaciones(cotizaciones.map(c => c.id === updated.id ? updated : c));
+  const updateCotizacionEstado = (id, estado) => persistCotizaciones(cotizaciones.map(c => c.id === id ? { ...c, estado, fechaVenta: estado === "Aceptada" ? (c.fechaVenta || todayISO()) : c.fechaVenta } : c));
+  const updateCotizacion = (updated) => persistCotizaciones(cotizaciones.map(c => c.id === updated.id ? { ...updated, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta } : c));
   const addSeguimiento = (data) => {
     const contacto = contactos.find(c => c.id === data.contactoId);
     persistSeguimientos([{ ...data, id: uid(), contactoNombre: contacto?.nombre }, ...seguimientos]);
   };
   const addVendedor = (nombre, telefono) => persistVendedores([...vendedores, { id: uid(), nombre, telefono }]);
-  const createUserAccess = async ({ nombre, email, password, rol, telefono }) => {
-    const profile = await createCRMUser({ nombre, email, password, rol, telefono, createdBy: currentUser });
+  const createUserAccess = async ({ nombre, email, password, rol, telefono, departamentosCobertura }) => {
+    const profile = await createCRMUser({ nombre, email, password, rol, telefono, departamentosCobertura, createdBy: currentUser });
     const existing = vendedores.find(item => String(item.email || "").toLowerCase() === profile.email);
     if (existing) {
       persistVendedores(vendedores.map(item => item.id === existing.id ? { ...item, ...profile } : item));
@@ -1445,11 +1584,13 @@ export default function CasaSolarCRM() {
               <CotizacionesView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores}
                 currentUser={currentUser} onAdd={addCotizacion} onUpdateEstado={updateCotizacionEstado} onUpdateCotizacion={updateCotizacion} />
             )}
+            {tab === "reportes" && <SalesReportsView cotizaciones={cotizaciones} vendedores={vendedores} currentUser={currentUser} />}
             {tab === "seguimientos" && (
               <SeguimientosView seguimientos={seguimientos} contactos={contactos} currentUser={currentUser} onAdd={addSeguimiento} />
             )}
             {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} />}
             {tab === "catalogo" && <CatalogoView />}
+            {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "equipo" && currentUser.rol === "Jefe" && (
               <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} />
             )}
@@ -1626,6 +1767,32 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .user-access-grid label:last-child { grid-column:1/-1; }
 .form-success { color:#27500A; background:#EAF3DE; padding:9px 11px; border-radius:8px; margin:0 0 12px; }
 .draft-note { display:block; color:#64820F; font-size:10.5px; margin-top:3px; }
+.order-evaluation-summary { background:#F7F5F0; border:1px solid #E4E0D8; border-left:4px solid #E30613; border-radius:10px; padding:14px; margin-bottom:18px; }
+.modal-body .order-summary-head h4 { color:#1B2430; border:0; padding:0; margin:0; }
+.order-summary-head { display:flex; align-items:flex-start; gap:9px; margin-bottom:12px; }
+.order-summary-head svg { color:#E30613; flex-shrink:0; }
+.order-summary-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.order-summary-grid > div, .quoted-equipment > div { background:#fff; border-radius:7px; padding:8px 10px; display:flex; flex-direction:column; gap:3px; }
+.order-summary-grid span, .quoted-equipment > span { color:#667085; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; }
+.order-summary-grid strong, .quoted-equipment strong { font-size:12px; }
+.quoted-equipment { margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+.quoted-equipment small { color:#667085; font-size:10.5px; }
+.technical-order-row { width:100%; border:1px solid #E4E0D8; background:#fff; border-radius:9px; padding:12px 14px; display:flex; justify-content:space-between; align-items:center; gap:12px; text-align:left; cursor:pointer; }
+.technical-order-row:hover { border-color:#E30613; background:#FFF9F9; }
+.technical-order-row > div { display:flex; flex-direction:column; gap:4px; }
+.technical-order-row > div:last-child { align-items:flex-end; }
+.technical-order-row span, .technical-order-row small { color:#667085; font-size:11.5px; }
+.report-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.report-filters { display:flex; align-items:end; gap:10px; flex-wrap:wrap; }
+.report-filters label { min-width:155px; flex:1; }
+.report-filters .input { margin-bottom:0; }
+.report-name { font-size:16px; line-height:1.2; }
+.sales-chart { display:flex; flex-direction:column; gap:10px; margin-top:16px; }
+.sales-bar-row { display:grid; grid-template-columns:65px minmax(120px,1fr) 105px; gap:10px; align-items:center; font-size:11.5px; }
+.sales-bar-row > span { color:#667085; }
+.sales-bar-row > strong { text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; }
+.sales-bar-track { height:16px; background:#F0EEE7; border-radius:10px; overflow:hidden; }
+.sales-bar { height:100%; background:linear-gradient(90deg,#E30613,#FF5A5F); border-radius:10px; }
 
 /* Calculadora de rutas */
 .route-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:16px; }
@@ -1669,5 +1836,16 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .discount-summary { grid-template-columns:1fr; }
   .user-access-grid { grid-template-columns:1fr; }
   .user-access-grid label:last-child { grid-column:auto; }
+  .order-summary-grid { grid-template-columns:1fr; }
+  .report-head { align-items:flex-start; flex-direction:column; }
+  .sales-bar-row { grid-template-columns:52px minmax(80px,1fr) 90px; }
+}
+
+@media print {
+  .sidebar, .report-head .btn-primary, .report-filters { display:none !important; }
+  .app-root, .app-shell, .main { background:#fff !important; overflow:visible !important; min-height:0 !important; }
+  .main { padding:0 !important; }
+  .section-card, .kpi-card { box-shadow:none !important; break-inside:avoid; }
+  .printable-report { color:#000; }
 }
 `;

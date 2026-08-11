@@ -39,7 +39,7 @@ export async function profileFromFirebaseUser(user) {
   };
 }
 
-export async function createCRMUser({ nombre, email, password, rol, telefono, createdBy }) {
+export async function createCRMUser({ nombre, email, password, rol, telefono, departamentosCobertura, createdBy }) {
   const secondaryApp = getApps().find(item => item.name === "user-creation")
     || initializeApp(firebaseConfig, "user-creation");
   const secondaryAuth = getAuth(secondaryApp);
@@ -52,6 +52,7 @@ export async function createCRMUser({ nombre, email, password, rol, telefono, cr
       email: email.trim().toLowerCase(),
       rol,
       telefono: telefono || "",
+      departamentosCobertura: departamentosCobertura || "",
       activo: true,
       creadoEn: new Date().toISOString(),
       creadoPor: createdBy.nombre,
