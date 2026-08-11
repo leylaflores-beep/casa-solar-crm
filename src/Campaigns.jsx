@@ -21,7 +21,9 @@ export const DEFAULT_CAMPAIGN = {
 const clean = value => String(value ?? "").trim();
 const normalize = value => clean(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const phoneDigits = value => clean(value).replace(/\D/g, "").replace(/^502/, "");
-const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, "0")).join("");
+const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, "0")).join("");
+const PROMOTION_BASE_URL = "https://crm-casa-solar.web.app";
+const promotionUrl = token => `${PROMOTION_BASE_URL}/p/${token}`;
 const valueBy = (row, names) => {
   const entry = Object.entries(row).find(([key]) => names.includes(normalize(key)));
   return entry ? clean(entry[1]) : "";
@@ -111,29 +113,40 @@ function CampaignModal({ currentUser, onSave, onClose }) {
   </div></div>;
 }
 
-function SendCampaignModal({ campaign, contactos, currentUser, onSent, onClose }) {
-  const eligible = contactos.filter(c => c.permisoPromociones !== "No contactar");
-  const [contactId, setContactId] = useState(eligible[0]?.id || "");
+function SendCampaignModal({ campaign, contactos, currentUser, onPrepared, onMarkSent, onClose }) {
+  const eligible = contactos.filter(c => c.permisoPromociones === "Acepta promociones");
+  const [selected, setSelected] = useState([]);
   const [channel, setChannel] = useState("WhatsApp");
-  const send = async () => {
-    const contact = contactos.find(c => c.id === contactId); if (!contact) return;
-    const phone = phoneDigits(contact.telefono);
-    if (channel === "WhatsApp" && !phone) return window.alert("Este cliente no tiene teléfono.");
-    if (channel === "Correo" && !contact.email) return window.alert("Este cliente no tiene correo.");
-    const token = randomToken();
-    await createCampaignLink(token, { campaignId: campaign.id, contactId: contact.id, seller: currentUser.nombre, sellerPhone: currentUser.telefono || "", createdAt: new Date().toISOString() });
-    const url = new URL(window.location.href); url.search = `?promo=${token}`; url.hash = "";
-    const advisorPhone = currentUser.telefono ? `\nWhatsApp del asesor: ${currentUser.telefono}` : "";
-    const text = `☀️ ¡Hola, ${contact.nombre}!\n\nEn Casa Solar valoramos mucho su confianza. Por eso queremos ofrecerle un beneficio exclusivo, preparado especialmente para nuestros clientes.\n\nConozca cómo puede disfrutar el confort y ahorro que ofrece la energía solar. ♻️🏠\n\n👉 Acceda a su promoción aquí:\n${url.toString()}\n\nSu asesor: ${currentUser.nombre}${advisorPhone}\n\n*${campaign.condiciones || "Promoción sujeta a condiciones y disponibilidad."}*`;
-    onSent({ id: token, token, contactoId: contact.id, contactoNombre: contact.nombre, vendedor: currentUser.nombre, vendedorTelefono: currentUser.telefono || "", canal: channel, sentAt: new Date().toISOString() });
-    if (channel === "WhatsApp") {
-      window.open(`https://wa.me/502${phone}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
-    } else {
-      window.location.href = `mailto:${contact.email}?subject=${encodeURIComponent(campaign.nombre)}&body=${encodeURIComponent(text)}`;
-    }
-    onClose();
+  const [queue, setQueue] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const toggle = id => setSelected(ids => ids.includes(id) ? ids.filter(item => item !== id) : ids.length < 10 ? [...ids, id] : ids);
+  const prepare = async () => {
+    const chosen = eligible.filter(c => selected.includes(c.id));
+    if (!chosen.length) return;
+    const incomplete = chosen.find(c => channel === "WhatsApp" ? !phoneDigits(c.telefono) : !c.email);
+    if (incomplete) return window.alert(`${incomplete.nombre} no tiene ${channel === "WhatsApp" ? "teléfono" : "correo"}.`);
+    setBusy(true);
+    try {
+      const prepared = await Promise.all(chosen.map(async contact => {
+        const token = randomToken();
+        const preparedAt = new Date().toISOString();
+        await createCampaignLink(token, { campaignId: campaign.id, contactId: contact.id, seller: currentUser.nombre, sellerPhone: currentUser.telefono || "", createdAt: preparedAt });
+        const advisorPhone = currentUser.telefono ? `\nWhatsApp del asesor: ${currentUser.telefono}` : "";
+        const text = `☀️ ¡Hola, ${contact.nombre}!\n\nEn Casa Solar valoramos mucho su confianza. Por eso queremos ofrecerle un beneficio exclusivo, preparado especialmente para nuestros clientes.\n\nConozca cómo puede disfrutar el confort y ahorro que ofrece la energía solar. ♻️🏠\n\n👉 Acceda a su promoción aquí:\n${promotionUrl(token)}\n\nSu asesor: ${currentUser.nombre}${advisorPhone}\n\n*${campaign.condiciones || "Promoción sujeta a condiciones y disponibilidad."}*`;
+        const record = { id: token, token, contactoId: contact.id, contactoNombre: contact.nombre, vendedor: currentUser.nombre, vendedorTelefono: currentUser.telefono || "", canal: channel, preparedAt, sentAt: null };
+        return { ...record, phone: phoneDigits(contact.telefono), email: contact.email || "", text };
+      }));
+      onPrepared(prepared.map(({ phone, email, text, ...record }) => record));
+      setQueue(prepared);
+    } finally { setBusy(false); }
   };
-  return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><h3>Enviar campaña</h3><button className="icon-btn" onClick={onClose}><X size={18}/></button></div><div className="modal-body"><label className="field-label">Cliente</label><select className="input" value={contactId} onChange={e=>setContactId(e.target.value)}>{eligible.map(c=><option key={c.id} value={c.id}>{c.nombre} · {c.permisoPromociones || "Pendiente"}</option>)}</select><label className="field-label">Canal</label><select className="input" value={channel} onChange={e=>setChannel(e.target.value)}><option>WhatsApp</option><option>Correo</option></select><div className="privacy-note">Se creará un enlace individual. El código no contiene el nombre ni el teléfono del cliente.</div></div><div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={!contactId} onClick={send}><Send size={16}/> Crear enlace y enviar</button></div></div></div>;
+  const deliver = item => {
+    if (channel === "WhatsApp") window.open(`https://wa.me/502${item.phone}?text=${encodeURIComponent(item.text)}`, "_blank", "noopener,noreferrer");
+    else window.location.href = `mailto:${item.email}?subject=${encodeURIComponent(campaign.nombre)}&body=${encodeURIComponent(item.text)}`;
+    setQueue(items => items.map(row => row.token === item.token ? { ...row, sentAt: new Date().toISOString() } : row));
+    onMarkSent(item.token);
+  };
+  return <div className="modal-overlay" onClick={onClose}><div className="modal modal-wide" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><h3>Enviar campaña</h3><small>Selecciona hasta 10 clientes con autorización.</small></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div><div className="modal-body">{queue.length ? <><div className="privacy-note">Los enlaces están preparados. Presiona cada botón por separado para que WhatsApp no bloquee las ventanas y puedas verificar el destinatario.</div><div className="send-queue">{queue.map(item=><div className="queue-row" key={item.token}><span><strong>{item.contactoNombre}</strong><small>{item.sentAt ? "Abierto para enviar" : "Pendiente"}</small></span><button className={item.sentAt ? "btn-ghost" : "btn-primary"} onClick={()=>deliver(item)}><MessageCircle size={15}/>{item.sentAt ? "Abrir nuevamente" : "Enviar"}</button></div>)}</div></> : <><label className="field-label">Canal</label><select className="input" value={channel} onChange={e=>setChannel(e.target.value)}><option>WhatsApp</option><option>Correo</option></select><div className="selection-head"><strong>{selected.length} de 10 seleccionados</strong><button className="btn-ghost small" onClick={()=>setSelected(eligible.slice(0,10).map(c=>c.id))}>Seleccionar primeros 10</button></div>{eligible.length ? <div className="contact-selector">{eligible.map(c=><label key={c.id} className={selected.includes(c.id)?"selected":""}><input type="checkbox" checked={selected.includes(c.id)} onChange={()=>toggle(c.id)} disabled={!selected.includes(c.id)&&selected.length>=10}/><span><strong>{c.nombre}</strong><small>{c.telefono || c.email || "Sin datos de contacto"}</small></span></label>)}</div>:<div className="alert-error">No hay clientes marcados como “Acepta promociones”. Actualiza primero el permiso desde Contactos.</div>}<div className="privacy-note">Cada cliente recibirá un enlace privado diferente bajo crm-casa-solar.web.app.</div></>}</div><div className="modal-foot"><button className="btn-ghost" onClick={onClose}>{queue.length?"Terminar":"Cancelar"}</button>{!queue.length&&<button className="btn-primary" disabled={busy||!selected.length} onClick={prepare}><Send size={16}/>{busy?"Preparando…":`Preparar ${selected.length} envío${selected.length===1?"":"s"}`}</button>}</div></div></div>;
 }
 
 export function CampaignsView({ campaigns, contactos, currentUser, onChange }) {
@@ -145,11 +158,12 @@ export function CampaignsView({ campaigns, contactos, currentUser, onChange }) {
     setStates(Object.fromEntries(linkEntries)); setPublicData(Object.fromEntries(campaignEntries));
   };
   useEffect(() => { refresh(); }, [campaigns.length]);
+  const allowedContacts = currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre);
   const updateCampaign = updated => onChange(campaigns.map(c => c.id === updated.id ? updated : c));
   return <div><div className="page-head row"><div><h2>Campañas</h2><p>Fidelización, promociones y seguimiento de beneficios.</p></div><button className="btn-primary" onClick={()=>setShowCreate(true)}><Plus size={16}/> Nueva campaña</button></div>
-    <div className="campaign-grid">{campaigns.map(c => { const data=publicData[c.id] || c; const sent=c.sends?.length||0; const opened=(c.sends||[]).filter(s=>states[s.token]?.accessedAt).length; const requested=(c.sends||[]).filter(s=>states[s.token]?.benefitRequestedAt).length; return <div className="campaign-card" key={c.id}>{(data.imageData||data.imageUrl) && <img src={data.imageData||data.imageUrl}/>}<div className="campaign-content"><h3>{c.nombre}</h3><p>{c.beneficio}</p><div className="campaign-kpis"><span><strong>{sent}</strong> enviados</span><span><strong>{opened}</strong> accesos</span><span><strong>{requested}</strong> solicitudes</span></div><div className="row"><button className="btn-primary" onClick={()=>setSending(c)}><MessageCircle size={15}/> Enviar</button><button className="btn-ghost" onClick={refresh}><RefreshCw size={14}/> Actualizar</button></div></div>{sent>0 && <div className="campaign-log"><table className="table small"><thead><tr><th>Cliente</th><th>Vendedor</th><th>Enviado</th><th>Acceso</th><th>Beneficio</th></tr></thead><tbody>{c.sends.map(s=>{const st=states[s.token]||{}; return <tr key={s.id}><td>{s.contactoNombre}</td><td>{s.vendedor}</td><td>{new Date(s.sentAt).toLocaleDateString("es-GT")}</td><td>{st.accessedAt?"Sí":"No"}</td><td>{st.usedBenefit?"Utilizado":st.benefitRequestedAt?<button className="btn-ghost small" onClick={async()=>{await markCampaignBenefitUsed(s.token,true);refresh();}}>Marcar utilizado</button>:"Sin solicitar"}</td></tr>})}</tbody></table></div>}</div>})}</div>
+    <div className="campaign-grid">{campaigns.map(c => { const data=publicData[c.id] || c; const sent=(c.sends||[]).filter(s=>s.sentAt).length; const opened=(c.sends||[]).filter(s=>states[s.token]?.accessedAt).length; const requested=(c.sends||[]).filter(s=>states[s.token]?.benefitRequestedAt).length; return <div className="campaign-card" key={c.id}>{(data.imageData||data.imageUrl) && <img src={data.imageData||data.imageUrl}/>}<div className="campaign-content"><h3>{c.nombre}</h3><p>{c.beneficio}</p><div className="campaign-kpis"><span><strong>{sent}</strong> enviados</span><span><strong>{opened}</strong> accesos</span><span><strong>{requested}</strong> solicitudes</span></div><div className="row"><button className="btn-primary" onClick={()=>setSending(c)}><MessageCircle size={15}/> Enviar</button><button className="btn-ghost" onClick={refresh}><RefreshCw size={14}/> Actualizar</button></div></div>{(c.sends?.length||0)>0 && <div className="campaign-log"><table className="table small"><thead><tr><th>Cliente</th><th>Vendedor</th><th>Envío</th><th>Acceso</th><th>Beneficio</th></tr></thead><tbody>{c.sends.map(s=>{const st=states[s.token]||{}; return <tr key={s.id}><td>{s.contactoNombre}</td><td>{s.vendedor}</td><td>{s.sentAt?new Date(s.sentAt).toLocaleDateString("es-GT"):"Preparado"}</td><td>{st.accessedAt?"Sí":"No"}</td><td>{st.usedBenefit?"Utilizado":st.benefitRequestedAt?<button className="btn-ghost small" onClick={async()=>{await markCampaignBenefitUsed(s.token,true);refresh();}}>Marcar utilizado</button>:"Sin solicitar"}</td></tr>})}</tbody></table></div>}</div>})}</div>
     {showCreate && <CampaignModal currentUser={currentUser} onClose={()=>setShowCreate(false)} onSave={c=>{onChange([c,...campaigns]);setShowCreate(false);}}/>}
-    {sending && <SendCampaignModal campaign={sending} contactos={contactos} currentUser={currentUser} onClose={()=>setSending(null)} onSent={send=>updateCampaign({...sending,sends:[send,...(sending.sends||[])]})}/>}<style>{CAMPAIGN_CSS}</style>
+    {sending && <SendCampaignModal campaign={sending} contactos={allowedContacts} currentUser={currentUser} onClose={()=>setSending(null)} onPrepared={batch=>{const current=campaigns.find(c=>c.id===sending.id)||sending;updateCampaign({...current,sends:[...batch,...(current.sends||[])]});}} onMarkSent={token=>{const current=campaigns.find(c=>c.id===sending.id)||sending;updateCampaign({...current,sends:(current.sends||[]).map(s=>s.token===token?{...s,sentAt:new Date().toISOString()}:s)});}}/>}<style>{CAMPAIGN_CSS}</style>
   </div>;
 }
 
@@ -163,5 +177,5 @@ export function PublicPromotion({ token }) {
 }
 
 const CAMPAIGN_CSS = `
-.upload-box{border:2px dashed #d8d3c8;border-radius:10px;padding:22px;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;background:#faf9f6;margin:8px 0 14px}.upload-box input{display:none}.alert-error{background:#fce8e8;color:#8a1118;padding:10px;border-radius:8px}.import-summary,.privacy-note{background:#f7f5f0;padding:11px;border-radius:8px;margin:10px 0}.preview-scroll{max-height:300px;overflow:auto}.campaign-preview{display:block;max-width:360px;max-height:260px;object-fit:contain;margin:10px auto}.campaign-grid{display:grid;gap:18px}.campaign-card{background:white;border:1px solid #e5e1d8;border-radius:13px;overflow:hidden}.campaign-card>img{width:260px;height:220px;object-fit:cover;float:left;margin-right:18px}.campaign-content{padding:18px}.campaign-kpis{display:flex;gap:20px;margin:15px 0}.campaign-kpis span{background:#f7f5f0;padding:8px 12px;border-radius:8px}.campaign-log{clear:both;padding:0 16px 16px}.public-promo{min-height:100vh;background:#f4f1eb;display:flex;justify-content:center;align-items:center;padding:24px;font-family:Arial,sans-serif}.public-promo.center{text-align:center}.promo-box{max-width:720px;background:white;padding:20px;border-radius:18px;text-align:center;box-shadow:0 12px 40px #0002}.promo-box>img{width:100%;border-radius:12px}.promo-box h1{color:#e30613}.promo-box h2{color:#222}.promo-box button{background:#e30613;color:white;border:0;border-radius:30px;padding:17px 25px;font-weight:800;font-size:17px;cursor:pointer}.promo-box small{display:block;margin-top:18px;color:#666}.success-box{background:#e8f5e9;color:#205c27;padding:16px;border-radius:10px;font-weight:700}@media(max-width:720px){.campaign-card>img{width:100%;height:auto;float:none;margin:0}.campaign-kpis{flex-wrap:wrap}}
+.upload-box{border:2px dashed #d8d3c8;border-radius:10px;padding:22px;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;background:#faf9f6;margin:8px 0 14px}.upload-box input{display:none}.alert-error{background:#fce8e8;color:#8a1118;padding:10px;border-radius:8px}.import-summary,.privacy-note{background:#f7f5f0;padding:11px;border-radius:8px;margin:10px 0}.preview-scroll{max-height:300px;overflow:auto}.selection-head{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}.contact-selector,.send-queue{max-height:360px;overflow:auto;border:1px solid #e5e1d8;border-radius:10px}.contact-selector label,.queue-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #eee}.contact-selector label:last-child,.queue-row:last-child{border-bottom:0}.contact-selector label.selected{background:#fff2f2}.contact-selector label span,.queue-row span{display:flex;flex:1;flex-direction:column}.contact-selector small,.queue-row small{color:#777}.queue-row{justify-content:space-between}.campaign-preview{display:block;max-width:360px;max-height:260px;object-fit:contain;margin:10px auto}.campaign-grid{display:grid;gap:18px}.campaign-card{background:white;border:1px solid #e5e1d8;border-radius:13px;overflow:hidden}.campaign-card>img{width:260px;height:220px;object-fit:cover;float:left;margin-right:18px}.campaign-content{padding:18px}.campaign-kpis{display:flex;gap:20px;margin:15px 0}.campaign-kpis span{background:#f7f5f0;padding:8px 12px;border-radius:8px}.campaign-log{clear:both;padding:0 16px 16px}.public-promo{min-height:100vh;background:#f4f1eb;display:flex;justify-content:center;align-items:center;padding:24px;font-family:Arial,sans-serif}.public-promo.center{text-align:center}.promo-box{max-width:720px;background:white;padding:20px;border-radius:18px;text-align:center;box-shadow:0 12px 40px #0002}.promo-box>img{width:100%;border-radius:12px}.promo-box h1{color:#e30613}.promo-box h2{color:#222}.promo-box button{background:#e30613;color:white;border:0;border-radius:30px;padding:17px 25px;font-weight:800;font-size:17px;cursor:pointer}.promo-box small{display:block;margin-top:18px;color:#666}.success-box{background:#e8f5e9;color:#205c27;padding:16px;border-radius:10px;font-weight:700}@media(max-width:720px){.campaign-card>img{width:100%;height:auto;float:none;margin:0}.campaign-kpis{flex-wrap:wrap}}
 `;

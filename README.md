@@ -23,7 +23,7 @@ Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol
 
 ## Clientes anteriores y campañas
 
-- En **Contactos → Importar Excel**, una jefa puede cargar archivos `.xls`, `.xlsx` o `.csv`, revisar posibles duplicados y decidir si omitirlos o actualizarlos.
+- En **Contactos → Importar Excel**, jefes y vendedores pueden cargar archivos `.xls`, `.xlsx` o `.csv`, revisar posibles duplicados y decidir si omitirlos o actualizarlos. Los clientes cargados por un vendedor quedan asignados automáticamente a ese vendedor.
 - Cada contacto incluye el permiso de promociones: pendiente, aceptado o no contactar.
 - En **Equipo** se registra el número de WhatsApp propio de cada vendedor.
 - En **Campañas** se crea un enlace individual por cliente y se registra vendedor, número del vendedor, fecha de envío, acceso, solicitud y uso del beneficio.
@@ -34,6 +34,14 @@ Para que el seguimiento público funcione, publique también el archivo `firesto
 ## GitHub Pages
 
 El proyecto incluye un flujo automático en `.github/workflows/deploy.yml`. Después de subir todos los archivos a GitHub, abre **Settings → Pages**, selecciona **GitHub Actions** como fuente y espera a que termine el proceso de publicación.
+
+## Firebase Hosting gratuito
+
+El flujo `.github/workflows/firebase-hosting.yml` publica la misma aplicación en `https://crm-casa-solar.web.app`. Para activarlo, guarda la clave de la cuenta de servicio como un secreto de GitHub llamado `FIREBASE_SERVICE_ACCOUNT_CRM_CASA_SOLAR`. No subas el archivo JSON al repositorio.
+
+Las campañas generan enlaces individuales con el formato `https://crm-casa-solar.web.app/p/CODIGO`. Los jefes pueden seleccionar hasta diez clientes autorizados y preparar una cola; cada mensaje se abre individualmente para reducir bloqueos del navegador y de WhatsApp.
+
+Desde Contactos, las cuentas con rol Jefe pueden seleccionar clientes visibles y asignarlos masivamente a un vendedor. Cada vendedor puede importar su propia base y preparar campañas para sus contactos asignados o importados, sin modificar clientes pertenecientes a otro vendedor.
 
 ## Cotizaciones y órdenes de pedido
 

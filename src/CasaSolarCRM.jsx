@@ -625,12 +625,14 @@ function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate, ordenS
   );
 }
 
-function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onOpen }) {
+function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onAssign, onOpen }) {
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
   const [filterVendedor, setFilterVendedor] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [assignTo, setAssignTo] = useState(vendedores[0]?.nombre || "");
 
   const visibles = useMemo(() => {
     return contactos.filter(c => {
@@ -650,7 +652,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
           <p>Llamadas entrantes y contactos por redes sociales.</p>
         </div>
         <div className="row">
-          {currentUser.rol === "Jefe" && <button className="btn-ghost" onClick={() => setShowImport(true)}><Upload size={16} /> Importar Excel</button>}
+          <button className="btn-ghost" onClick={() => setShowImport(true)}><Upload size={16} /> Importar Excel</button>
           <button className="btn-primary" onClick={() => setShowModal(true)}><Plus size={16} /> Nuevo contacto</button>
         </div>
       </div>
@@ -672,6 +674,17 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         )}
       </div>
 
+      {currentUser.rol === "Jefe" && (
+        <div className="bulk-bar">
+          <label><input type="checkbox" checked={visibles.length > 0 && visibles.every(c => selected.includes(c.id))} onChange={e => setSelected(e.target.checked ? visibles.map(c => c.id) : [])} /> Seleccionar los {visibles.length} visibles</label>
+          <span>{selected.length} seleccionados</span>
+          <select className="input compact" value={assignTo} onChange={e => setAssignTo(e.target.value)}>
+            {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+          </select>
+          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={() => { onAssign(selected, assignTo); setSelected([]); }}><Users2 size={14} /> Asignar vendedor</button>
+        </div>
+      )}
+
       {visibles.length === 0 ? (
         <div className="empty-state">No hay contactos que coincidan. Crea uno nuevo para empezar.</div>
       ) : (
@@ -680,6 +693,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
             const Icon = canalIcon(c.canal);
             return (
               <div key={c.id} className="contact-row" onClick={() => onOpen(c.id)}>
+                {currentUser.rol === "Jefe" && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
                 <div className="channel-icon"><Icon size={16} /></div>
                 <div className="contact-main">
                   <div className="contact-name">{c.nombre}</div>
@@ -698,7 +712,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         <ContactModal vendedores={vendedores} currentUser={currentUser} onClose={() => setShowModal(false)}
           onSave={(form) => { onAdd(form); setShowModal(false); }} />
       )}
-      {showImport && <ExcelImportModal contactos={contactos} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={(rows, mode) => { onImport(rows, mode); setShowImport(false); }} />}
+      {showImport && <ExcelImportModal contactos={currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={(rows, mode) => { onImport(rows, mode); setShowImport(false); }} />}
     </div>
   );
 }
@@ -933,7 +947,7 @@ function EquipoView({ vendedores, onAdd, onRemove, onUpdate }) {
         <div className="mini-list" style={{ marginTop: 16 }}>
           {vendedores.map(v => (
             <div key={v.id} className="mini-row">
-              <span style={{ minWidth: 190 }}>{v.nombre}</span>
+              <input className="input compact" style={{ minWidth: 190, flex: 1 }} defaultValue={v.nombre} aria-label={`Nombre de ${v.nombre}`} onBlur={e => onUpdate({ ...v, nombre: e.target.value.trim() })} />
               <input className="input compact" style={{ flex: 1 }} defaultValue={v.telefono || ""} placeholder="Número de WhatsApp" onBlur={e => onUpdate({ ...v, telefono: e.target.value.trim() })} />
               <button className="icon-btn" onClick={() => onRemove(v.id)}><Trash2 size={14} /></button>
             </div>
@@ -973,7 +987,14 @@ export default function CasaSolarCRM() {
         storageGet("casasolar:seguimientos", true),
         storageGet("casasolar:campaigns", true),
       ]);
-      const sellerList = v || [];
+      let sellerList = v || [];
+      const linkedSeller = sellerList.find(item => item.uid === profile.uid || item.email === profile.email || item.nombre === profile.nombre);
+      if (linkedSeller) {
+        const linkedProfile = { ...linkedSeller, uid: profile.uid, email: profile.email };
+        sellerList = sellerList.map(item => item.id === linkedSeller.id ? linkedProfile : item);
+        setCurrentUser({ ...profile, nombre: linkedProfile.nombre });
+        await storageSet("casasolar:vendedores", sellerList, true);
+      }
       const loadedQuotes = q || [];
       const counters = {};
       loadedQuotes.forEach(item => {
@@ -999,9 +1020,10 @@ export default function CasaSolarCRM() {
         await savePublicCampaign(DEFAULT_CAMPAIGN);
       }
       if (repairedNumbers) await storageSet("casasolar:cotizaciones", normalizedQuotes, true);
-      if (!sellerList.some(item => item.nombre === profile.nombre)) {
-        const updated = [...sellerList, { id: uid(), nombre: profile.nombre }];
+      if (!linkedSeller) {
+        const updated = [...sellerList, { id: uid(), nombre: profile.nombre, uid: profile.uid, email: profile.email }];
         setVendedores(updated);
+        setCurrentUser(profile);
         await storageSet("casasolar:vendedores", updated, true);
       }
       setLoading(false);
@@ -1032,6 +1054,8 @@ export default function CasaSolarCRM() {
     rows.forEach(row => {
       const index = next.findIndex(item => (phone(row.telefono) && phone(item.telefono) === phone(row.telefono)) || name(item.nombre) === name(row.nombre));
       if (index < 0) { next.unshift({ ...row, id: uid() }); added += 1; return; }
+      const canUpdate = currentUser.rol === "Jefe" || next[index].vendedor === currentUser.nombre;
+      if (!canUpdate) { skipped += 1; return; }
       if (mode === "update") {
         const available = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== "" && value != null));
         next[index] = { ...next[index], ...available, id: next[index].id };
@@ -1045,6 +1069,13 @@ export default function CasaSolarCRM() {
     persistContactos(contactos.map(c => c.id === updated.id ? updated : c));
     const cliente = { id: updated.id, nombre: updated.nombre || "", telefono: updated.telefono || "", email: updated.email || "", nit: updated.nit || "C/F", direccion: updated.direccion || "", departamento: updated.departamento || "" };
     persistCotizaciones(cotizaciones.map(q => q.contactoId === updated.id ? { ...q, contactoNombre: updated.nombre, cliente } : q));
+  };
+  const assignContactos = (ids, seller) => {
+    const selectedIds = new Set(ids);
+    persistContactos(contactos.map(item => selectedIds.has(item.id) ? { ...item, vendedor: seller } : item));
+    persistCotizaciones(cotizaciones.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
+    persistSeguimientos(seguimientos.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
+    window.alert(`${ids.length} cliente${ids.length === 1 ? "" : "s"} asignado${ids.length === 1 ? "" : "s"} a ${seller}.`);
   };
   const addCotizacion = (data) => {
     const contacto = contactos.find(c => c.id === data.contactoId);
@@ -1069,12 +1100,34 @@ export default function CasaSolarCRM() {
     persistSeguimientos([{ ...data, id: uid(), contactoNombre: contacto?.nombre }, ...seguimientos]);
   };
   const addVendedor = (nombre, telefono) => persistVendedores([...vendedores, { id: uid(), nombre, telefono }]);
-  const updateVendedor = (updated) => persistVendedores(vendedores.map(v => v.id === updated.id ? updated : v));
+  const updateVendedor = (updated) => {
+    const previous = vendedores.find(v => v.id === updated.id);
+    const oldName = previous?.nombre || "";
+    const newName = String(updated.nombre || "").trim();
+    if (!newName) return window.alert("El nombre del vendedor no puede quedar vacío.");
+    if (vendedores.some(v => v.id !== updated.id && v.nombre.toLowerCase() === newName.toLowerCase())) {
+      return window.alert("Ya existe otro vendedor con ese nombre.");
+    }
+    const saved = { ...updated, nombre: newName };
+    persistVendedores(vendedores.map(v => v.id === saved.id ? saved : v));
+    if (oldName && oldName !== newName) {
+      persistContactos(contactos.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
+      persistCotizaciones(cotizaciones.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
+      persistSeguimientos(seguimientos.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
+      persistCampaigns(campaigns.map(campaign => ({
+        ...campaign,
+        sends: (campaign.sends || []).map(send => send.vendedor === oldName ? { ...send, vendedor: newName } : send),
+      })));
+      if (currentUser.uid === saved.uid || currentUser.email === saved.email || currentUser.nombre === oldName) {
+        setCurrentUser(user => ({ ...user, nombre: newName }));
+      }
+    }
+  };
   const removeVendedor = (id) => persistVendedores(vendedores.filter(v => v.id !== id));
 
   const selectedContact = selectedId ? contactos.find(c => c.id === selectedId) : null;
 
-  const promoToken = new URLSearchParams(window.location.search).get("promo");
+  const promoToken = window.location.pathname.match(/\/p\/([a-f0-9]{24})\/?$/i)?.[1] || new URLSearchParams(window.location.search).get("promo");
   if (promoToken) return <PublicPromotion token={promoToken} />;
 
   if (loading) return <div className="loading-wrap"><Sun size={22} className="spin" /></div>;
@@ -1093,7 +1146,7 @@ export default function CasaSolarCRM() {
             )}
             {tab === "contactos" && !selectedContact && (
               <ContactosView contactos={contactos} vendedores={vendedores} currentUser={currentUser}
-                onAdd={addContacto} onImport={importContactos} onOpen={setSelectedId} />
+                onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onOpen={setSelectedId} />
             )}
             {tab === "contactos" && selectedContact && (
               <ContactDetail contacto={selectedContact} cotizaciones={cotizaciones} seguimientos={seguimientos}
@@ -1129,6 +1182,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .muted { color: #8A8F98; font-size: 12.5px; }
 
 .loading-wrap { display:flex; align-items:center; justify-content:center; min-height: 400px; color:#E30613; }
+.bulk-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:#fff; border:1px solid #E5E1D8; border-radius:10px; padding:10px 12px; margin-bottom:12px; }
+.bulk-bar label { display:flex; align-items:center; gap:7px; }
 .spin { animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
