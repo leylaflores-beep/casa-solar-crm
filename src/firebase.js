@@ -24,7 +24,7 @@ const ADMINISTRADORAS = {
 export async function profileFromFirebaseUser(user) {
   const email = (user.email || "").toLowerCase();
   const adminName = ADMINISTRADORAS[email];
-  const profileSnapshot = await getDoc(doc(db, "users", user.uid));
+  const profileSnapshot = await getDoc(doc(db, "crm_data", `user_${user.uid}`));
   const savedProfile = profileSnapshot.exists() ? profileSnapshot.data() : null;
   const fallbackName = email
     .split("@")[0]
@@ -57,7 +57,7 @@ export async function createCRMUser({ nombre, email, password, rol, telefono, cr
       creadoPor: createdBy.nombre,
       creadoPorEmail: createdBy.email,
     };
-    await setDoc(doc(db, "users", credential.user.uid), profile);
+    await setDoc(doc(db, "crm_data", `user_${credential.user.uid}`), profile);
     return profile;
   } finally {
     await signOut(secondaryAuth);
