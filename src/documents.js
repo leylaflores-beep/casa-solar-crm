@@ -6,6 +6,7 @@ const prettyDate = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDate
 
 export function downloadQuotePdf(quote, contact, logo) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const client = contact || quote.cliente || {};
   const red = [227, 6, 19];
   const dark = [31, 36, 39];
 
@@ -27,9 +28,12 @@ export function downloadQuotePdf(quote, contact, logo) {
     ["COTIZACIÓN", quote.numero],
     ["FECHA", prettyDate(quote.fecha)],
     ["VÁLIDA HASTA", prettyDate(quote.validaHasta)],
-    ["CLIENTE", contact?.nombre || quote.contactoNombre || ""],
-    ["NIT", contact?.nit || "C/F"],
-    ["DIRECCIÓN", contact?.direccion || ""],
+    ["CLIENTE", client.nombre || quote.contactoNombre || ""],
+    ["NIT", client.nit || "C/F"],
+    ["TELÉFONO", client.telefono || "Sin registrar"],
+    ["CORREO", client.email || "Sin registrar"],
+    ["DEPARTAMENTO", client.departamento || "Sin registrar"],
+    ["DIRECCIÓN", client.direccion || "Sin registrar"],
   ];
   let sy = 42;
   sidebar.forEach(([label, value]) => {
@@ -37,10 +41,10 @@ export function downloadQuotePdf(quote, contact, logo) {
     doc.setTextColor(255); doc.setFont("helvetica", "normal");
     const lines = doc.splitTextToSize(String(value || "-"), 37);
     doc.text(lines, 9, sy + 6);
-    sy += Math.max(20, lines.length * 4 + 12);
+    sy += Math.max(15, lines.length * 4 + 9);
   });
   doc.setTextColor(255); doc.setFontSize(7);
-  doc.text(["CASA SOLAR", "Plaza Pericentro Zona 8,", "Quetzaltenango", "PBX 7767 5949", "info@casasolar.com.gt", "", "ASESOR(A) DE VENTAS", quote.vendedor || ""], 9, 226);
+  doc.text(["CASA SOLAR", "Plaza Pericentro Zona 8,", "Quetzaltenango", "PBX 7767 5949", "info@casasolar.com.gt", "", "ASESOR(A) DE VENTAS", quote.vendedor || ""], 9, 238);
   doc.setFont("helvetica", "bold"); doc.text("www.casasolar.com.gt", 10, 291);
 
   doc.setTextColor(...dark);
@@ -85,11 +89,12 @@ export function downloadQuotePdf(quote, contact, logo) {
   doc.text(conditions, 62, y + 26);
   doc.setDrawColor(...red); doc.line(60, 275, 198, 275);
   doc.setTextColor(...red); doc.setFont("helvetica", "bold"); doc.text("ACEPTAMOS TARJETAS DE CRÉDITO, DÉBITO Y TRANSFERENCIA", 62, 283);
-  doc.save(`${quote.numero}-${(contact?.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  doc.save(`${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
 }
 
-export function downloadOrderPdf(quote, contact, logo) {
+export function downloadOrderPdf(quote, contact, logo, order = {}) {
   const doc = new jsPDF({ unit: "mm", format: [216, 330] });
+  const client = contact || quote.cliente || {};
   const black = [20, 20, 20];
   doc.addImage(logo, "PNG", 12, 10, 64, 11);
   doc.setTextColor(...black); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text("O R D E N  D E  P E D I D O", 108, 21, { align: "center" });
@@ -111,15 +116,15 @@ export function downloadOrderPdf(quote, contact, logo) {
   section(12, 41, 92, "PROGRAMACIÓN");
   lineField("Fecha de pedido", prettyDate(quote.fecha), 15, 53, 86);
   lineField("Asesor de ventas", quote.vendedor, 15, 63, 86);
-  lineField("Fecha instalación", "", 15, 73, 86);
-  lineField("Horario", "Mañana [ ]       Tarde [ ]", 15, 83, 86);
+  lineField("Fecha instalación", order.fechaInstalacion ? prettyDate(order.fechaInstalacion) : "Por confirmar", 15, 73, 86);
+  lineField("Horario", order.horario || "Por confirmar", 15, 83, 86);
 
   section(108, 41, 96, "DATOS DEL CLIENTE");
-  lineField("Nombre", contact?.nombre, 111, 53, 90);
-  lineField("Dirección", contact?.direccion, 111, 63, 90);
-  lineField("Departamento", contact?.departamento, 111, 73, 90);
-  lineField("Teléfono", contact?.telefono, 111, 83, 90);
-  lineField("NIT", contact?.nit, 111, 93, 90);
+  lineField("Nombre", client.nombre, 111, 53, 90);
+  lineField("Dirección", order.direccion || client.direccion, 111, 63, 90);
+  lineField("Departamento", order.departamento || client.departamento, 111, 73, 90);
+  lineField("Teléfono", order.telefono || client.telefono, 111, 83, 90);
+  lineField("NIT", order.nit || client.nit, 111, 93, 90);
 
   section(12, 93, 92, "DESCRIPCIÓN DEL PRODUCTO");
   const orderItems = quote.items.slice(0, 16).map(item => [
@@ -139,41 +144,42 @@ export function downloadOrderPdf(quote, contact, logo) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.text(`TOTAL: ${money(quote.total)}`, 101, tableEnd + 6, { align: "right" });
 
   section(108, 103, 96, "DATOS DE FACTURACIÓN");
-  lineField("Nombre", contact?.nombre, 111, 115, 90);
-  lineField("Dirección", contact?.direccion, 111, 125, 90);
-  lineField("Departamento", contact?.departamento, 111, 135, 90);
-  lineField("Teléfono", contact?.telefono, 111, 145, 90);
-  lineField("NIT", contact?.nit, 111, 155, 90);
+  lineField("Nombre", client.nombre, 111, 115, 90);
+  lineField("Dirección", order.direccion || client.direccion, 111, 125, 90);
+  lineField("Departamento", order.departamento || client.departamento, 111, 135, 90);
+  lineField("Teléfono", order.telefono || client.telefono, 111, 145, 90);
+  lineField("NIT", order.nit || client.nit, 111, 155, 90);
 
   section(108, 164, 96, "DATOS TÉCNICOS");
   const technical = [
-    "Niveles de la casa:  1 [ ]   2 [ ]   3 [ ]   4 [ ]   Otros: __________",
-    "Material del techo:  Lámina [ ]   Terraza [ ]   Teja [ ]",
-    "Tipo de techo:  Plano [ ]   1 agua [ ]   2 aguas [ ]   Varias [ ]",
-    "Tubería disponible:  Caliente Sí [ ] No [ ]   Fría Sí [ ] No [ ]",
-    "Presión de agua:  Baja [ ]   Media [ ]   Alta [ ]   Muy alta [ ]",
-    "Bomba hidroneumática:  Sí [ ]  No [ ]",
-    "Depósito para agua:  Sí [ ]  No [ ]   Altura: __________",
-    "Conecta al depósito:  Sí [ ]  No [ ]",
-    "Gradas al último nivel:  Sí [ ]  No [ ]",
-    "¿Entra camión a la casa?:  Sí [ ]  No [ ]",
+    `Niveles de la casa: ${order.niveles || "Sin indicar"}`,
+    `Material del techo: ${order.materialTecho || "Sin indicar"}`,
+    `Tipo de techo: ${order.tipoTecho || "Sin indicar"}`,
+    `Tubería disponible: Caliente ${order.tuberiaCaliente || "-"} / Fría ${order.tuberiaFria || "-"}`,
+    `Presión de agua: ${order.presionAgua || "Sin indicar"}`,
+    `Bomba hidroneumática: ${order.bomba || "Sin indicar"}`,
+    `Depósito para agua: ${order.deposito || "-"} / Altura: ${order.alturaDeposito || "-"}`,
+    `Conecta al depósito: ${order.conectaDeposito || "Sin indicar"}`,
+    `Gradas al último nivel: ${order.gradas || "Sin indicar"}`,
+    `¿Entra camión a la casa?: ${order.entraCamion || "Sin indicar"}`,
   ];
   doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
   technical.forEach((text, index) => doc.text(text, 112, 176 + index * 8));
 
   section(12, 222, 92, "ABONOS");
-  const payments = Array.from({ length: 6 }, () => ["", "", ""]);
+  const payments = [[prettyDate(quote.fecha), order.abono ? money(order.abono) : "", order.saldo ? money(order.saldo) : ""], ...Array.from({ length: 5 }, () => ["", "", ""])];
   autoTable(doc, { startY: 229, margin: { left: 12, right: 112 }, head: [["Fecha", "Abono (Q)", "Saldo (Q)"]], body: payments, theme: "grid", styles: { fontSize: 6, minCellHeight: 7 }, headStyles: { fillColor: [235,235,235], textColor: black } });
 
   section(108, 250, 96, "FORMA DE PAGO");
   doc.setFontSize(6.5); doc.setFont("helvetica", "normal");
-  ["Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque", "Contado", "Transferencia"].forEach((p, i) => doc.text(`${p}:  Abono __________  Saldo __________`, 112, 262 + i * 8));
+  const paymentMethods = ["Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque", "Contado", "Transferencia"];
+  paymentMethods.forEach((p, i) => doc.text(`${p === order.formaPago ? "[X]" : "[ ]"} ${p}${p === order.formaPago ? `  Abono ${money(order.abono)}  Saldo ${money(order.saldo)}` : ""}`, 112, 262 + i * 8));
 
   section(12, 286, 92, "PROMOCIÓN / OBSERVACIONES");
   doc.setDrawColor(160); doc.rect(12, 293, 92, 23);
-  doc.setFontSize(6); doc.text(doc.splitTextToSize(quote.notas || "", 86), 15, 299);
+  doc.setFontSize(6); doc.text(doc.splitTextToSize(order.observaciones || quote.notas || "", 86), 15, 299);
   doc.setFontSize(5.5); doc.text("Los pagos realizados no son reembolsables. Equipo sujeto a disponibilidad. Cambios de instalación pueden generar costos adicionales.", 108, 309, { maxWidth: 94 });
   doc.line(18, 322, 65, 322); doc.line(84, 322, 131, 322); doc.line(150, 322, 198, 322);
   doc.setFontSize(6); doc.text("Firma del cliente", 41, 326, { align: "center" }); doc.text("Firma del asesor", 107, 326, { align: "center" }); doc.text("Firma de Operaciones", 174, 326, { align: "center" });
-  doc.save(`Orden-${quote.numero}-${(contact?.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  doc.save(`Orden-${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
 }

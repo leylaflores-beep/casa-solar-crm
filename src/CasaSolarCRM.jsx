@@ -361,6 +361,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClos
   const [precio, setPrecio] = useState("");
   const [notas, setNotas] = useState("");
   const [estado, setEstado] = useState("Pendiente");
+  const clienteSeleccionado = contactos.find(c => c.id === contactoId);
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precioUnitario, 0);
 
@@ -387,6 +388,15 @@ function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClos
           <select className="input" value={contactoId} onChange={e => setContactoId(e.target.value)}>
             {contactos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
+          {clienteSeleccionado && (
+            <div className="client-preview">
+              <span><strong>Teléfono:</strong> {clienteSeleccionado.telefono || "Sin registrar"}</span>
+              <span><strong>Correo:</strong> {clienteSeleccionado.email || "Sin registrar"}</span>
+              <span><strong>NIT:</strong> {clienteSeleccionado.nit || "C/F"}</span>
+              <span><strong>Departamento:</strong> {clienteSeleccionado.departamento || "Sin registrar"}</span>
+              <span className="full"><strong>Dirección:</strong> {clienteSeleccionado.direccion || "Sin registrar"}</span>
+            </div>
+          )}
 
           <label className="field-label">Agregar producto o servicio</label>
           <div className="item-row quote-item-grid">
@@ -483,7 +493,44 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
   );
 }
 
+function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
+  const [form, setForm] = useState({
+    fechaInstalacion: "", horario: "Mañana", direccion: contacto?.direccion || "",
+    departamento: contacto?.departamento || "", telefono: contacto?.telefono || "",
+    nit: contacto?.nit || "", niveles: "1", materialTecho: "Lámina", tipoTecho: "",
+    tuberiaCaliente: "Sí", tuberiaFria: "Sí", presionAgua: "Media",
+    bomba: "No", deposito: "Sí", alturaDeposito: "", conectaDeposito: "Sí",
+    gradas: "Sí", entraCamion: "Sí", formaPago: "Transferencia",
+    abono: "", saldo: String(cotizacion.total || ""), observaciones: cotizacion.notas || "",
+  });
+  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const field = (label, key, type = "text") => (
+    <div><label className="field-label">{label}</label><input className="input" type={type} value={form[key]} onChange={e => set(key, e.target.value)} /></div>
+  );
+  const select = (label, key, options) => (
+    <div><label className="field-label">{label}</label><select className="input" value={form[key]} onChange={e => set(key, e.target.value)}>{options.map(o => <option key={o}>{o}</option>)}</select></div>
+  );
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="modal-head"><div><h3>Orden de pedido</h3><small>{cotizacion.numero} · {contacto?.nombre}</small></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>
+        <div className="modal-body">
+          <h4>Programación e instalación</h4>
+          <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
+          <h4>Datos técnicos</h4>
+          <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>
+          <h4>Pago y observaciones</h4>
+          <div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div>
+          <label className="field-label">Promoción u observaciones</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
+        </div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" onClick={() => onGenerate(form)}><Download size={16} /> Generar orden PDF</button></div>
+      </div>
+    </div>
+  );
+}
+
 function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate }) {
+  const [showOrder, setShowOrder] = useState(false);
   const logAction = (canal, destinatario) => {
     const registro = {
       id: uid(), canal, destinatario,
@@ -514,12 +561,13 @@ function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate }) {
       <button className="btn-ghost small" onClick={() => downloadQuotePdf(cotizacion, contacto, LOGO_FULL)} title="Descargar cotización PDF"><Download size={14} /> PDF</button>
       <button className="btn-ghost small" onClick={sendWhatsApp} title="Abrir WhatsApp y registrar el envío"><Send size={14} /> WhatsApp</button>
       <button className="btn-ghost small" onClick={sendEmail} title="Abrir correo y registrar el envío"><Mail size={14} /> Correo</button>
-      <button className="btn-ghost small" onClick={() => { downloadOrderPdf(cotizacion, contacto, LOGO_FULL); logAction("Orden de pedido", "Descarga interna"); }} title="Generar orden de pedido"><ShoppingCart size={14} /> Orden</button>
+      <button className="btn-ghost small" onClick={() => setShowOrder(true)} title="Llenar y generar orden de pedido"><ShoppingCart size={14} /> Orden</button>
       {(cotizacion.envios || []).length > 0 && (
         <span className="send-count" title={(cotizacion.envios || []).map(e => `${new Date(e.fechaHora).toLocaleString("es-GT")} · ${e.canal} · ${e.usuario}`).join("\n")}>
           {(cotizacion.envios || []).length} registro{cotizacion.envios.length === 1 ? "" : "s"}
         </span>
       )}
+      {showOrder && <OrderFormModal cotizacion={cotizacion} contacto={contacto} onClose={() => setShowOrder(false)} onGenerate={(form) => { downloadOrderPdf(cotizacion, contacto, LOGO_FULL, form); logAction("Orden de pedido", "Descarga interna"); setShowOrder(false); }} />}
     </div>
   );
 }
@@ -712,7 +760,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
           <thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Vendedor</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody>
             {visibles.map(c => {
-              const contacto = contactos.find(k => k.id === c.contactoId);
+              const contacto = contactos.find(k => k.id === c.contactoId) || c.cliente;
               return (
                 <tr key={c.id}>
                   <td><strong>{c.numero || "—"}</strong></td>
@@ -889,7 +937,12 @@ export default function CasaSolarCRM() {
     const numero = `CS-${year}-${String(max + 1).padStart(4, "0")}`;
     const validDate = new Date(`${data.fecha}T12:00:00`);
     validDate.setDate(validDate.getDate() + 30);
-    persistCotizaciones([{ ...data, id: uid(), numero, validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre }, ...cotizaciones]);
+    const cliente = contacto ? {
+      id: contacto.id, nombre: contacto.nombre || "", telefono: contacto.telefono || "",
+      email: contacto.email || "", nit: contacto.nit || "C/F",
+      direccion: contacto.direccion || "", departamento: contacto.departamento || "",
+    } : null;
+    persistCotizaciones([{ ...data, id: uid(), numero, validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre, cliente }, ...cotizaciones]);
   };
   const updateCotizacionEstado = (id, estado) => persistCotizaciones(cotizaciones.map(c => c.id === id ? { ...c, estado } : c));
   const updateCotizacion = (updated) => persistCotizaciones(cotizaciones.map(c => c.id === updated.id ? updated : c));
@@ -1065,9 +1118,14 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .modal-overlay { position:fixed; inset:0; background:rgba(11,37,69,0.4); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; }
 .modal { background:#fff; border-radius:14px; width:100%; max-width:480px; max-height:88vh; display:flex; flex-direction:column; }
 .modal.quote-modal { max-width:1080px; }
+.modal.modal-wide { max-width:900px; }
 .modal-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid #F0EEE7; }
 .modal-body { padding:18px 20px; overflow-y:auto; }
 .modal-foot { display:flex; justify-content:flex-end; gap:10px; padding:14px 20px; border-top:1px solid #F0EEE7; }
+.modal-body h4 { margin:8px 0 12px; padding-bottom:7px; color:#E30613; border-bottom:1px solid #F0EEE7; }
+.form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 12px; }
+.client-preview { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 18px; background:#F7F5F0; border:1px solid #E8E4DA; border-radius:9px; padding:11px 13px; margin:-5px 0 16px; font-size:12px; color:#4A5568; }
+.client-preview .full { grid-column:1/-1; }
 .item-row { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
 .item-row .input { margin-bottom:0; }
 .item-row .qty { width:70px; }
@@ -1090,5 +1148,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .kpi-grid { grid-template-columns: repeat(2,1fr); }
   .row-2 { grid-template-columns: 1fr; }
   .quote-item-grid { grid-template-columns:1fr 1fr; }
+  .form-grid { grid-template-columns:1fr; }
+  .client-preview { grid-template-columns:1fr; }
+  .client-preview .full { grid-column:auto; }
 }
 `;
