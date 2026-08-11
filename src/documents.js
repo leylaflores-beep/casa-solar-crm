@@ -94,6 +94,13 @@ export function downloadQuotePdf(quote, contact, logo) {
 
   let y = doc.lastAutoTable.finalY + 9;
   if (y > 245) { doc.addPage(); y = 22; }
+  if (quote.descuentoAutorizado) {
+    const discount = quote.descuentoAutorizado;
+    doc.setTextColor(90); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+    const label = discount.tipo === "Porcentaje" ? `${discount.valor}%` : money(discount.monto);
+    doc.text(`Descuento adicional autorizado: ${label} (${money(discount.monto)})`, 198, y - 8, { align: "right" });
+    y += 3;
+  }
   doc.setFillColor(...red); doc.rect(150, y - 6, 48, 13, "F");
   doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text(`TOTAL ${money(quote.total)}`, 194, y + 2, { align: "right" });
   doc.setTextColor(...dark); doc.setFontSize(8); doc.setFont("helvetica", "bold");

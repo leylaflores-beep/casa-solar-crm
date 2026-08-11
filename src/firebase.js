@@ -1,5 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { getApps, initializeApp } from "firebase/app";
+import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
 import { doc, getDoc, getFirestore, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -21,9 +21,11 @@ const ADMINISTRADORAS = {
   "ligiaeugeniamolina@gmail.com": "Ligia Eugenia Molina",
 };
 
-export function profileFromFirebaseUser(user) {
+export async function profileFromFirebaseUser(user) {
   const email = (user.email || "").toLowerCase();
   const adminName = ADMINISTRADORAS[email];
+  const profileSnapshot = await getDoc(doc(db, "users", user.uid));
+  const savedProfile = profileSnapshot.exists() ? profileSnapshot.data() : null;
   const fallbackName = email
     .split("@")[0]
     .replace(/[._-]+/g, " ")
@@ -32,9 +34,34 @@ export function profileFromFirebaseUser(user) {
   return {
     uid: user.uid,
     email,
-    nombre: adminName || user.displayName || fallbackName || "Vendedor",
-    rol: adminName ? "Jefe" : "Vendedor",
+    nombre: savedProfile?.nombre || adminName || user.displayName || fallbackName || "Vendedor",
+    rol: savedProfile?.rol || (adminName ? "Jefe" : "Vendedor"),
   };
+}
+
+export async function createCRMUser({ nombre, email, password, rol, telefono, createdBy }) {
+  const secondaryApp = getApps().find(item => item.name === "user-creation")
+    || initializeApp(firebaseConfig, "user-creation");
+  const secondaryAuth = getAuth(secondaryApp);
+  const credential = await createUserWithEmailAndPassword(secondaryAuth, email.trim().toLowerCase(), password);
+  try {
+    await updateProfile(credential.user, { displayName: nombre.trim() });
+    const profile = {
+      uid: credential.user.uid,
+      nombre: nombre.trim(),
+      email: email.trim().toLowerCase(),
+      rol,
+      telefono: telefono || "",
+      activo: true,
+      creadoEn: new Date().toISOString(),
+      creadoPor: createdBy.nombre,
+      creadoPorEmail: createdBy.email,
+    };
+    await setDoc(doc(db, "users", credential.user.uid), profile);
+    return profile;
+  } finally {
+    await signOut(secondaryAuth);
+  }
 }
 
 export function observeAuth(callback) {
