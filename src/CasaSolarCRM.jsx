@@ -57,6 +57,11 @@ const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT",
 const fmtMoney = (n) => new Intl.NumberFormat("es-GT", { style: "currency", currency: "GTQ", maximumFractionDigits: 2 }).format(n || 0);
 const canalIcon = (canal) => (CANALES.find(c => c.id === canal) || CANALES[CANALES.length - 1]).icon;
 const productoNombre = (id) => (CATALOGO.find(p => p.id === id) || {}).nombre || id;
+const nombreItem = (item) => {
+  const descripcion = String(item?.descripcion || "").trim();
+  if (descripcion && descripcion.toLowerCase() !== "producto") return descripcion;
+  return item?.productoNombre || item?.producto || item?.nombre || productoNombre(item?.productoId) || "Producto sin especificar";
+};
 
 async function storageGet(key, shared) {
   try {
@@ -350,17 +355,18 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
   );
 }
 
-function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClose }) {
-  const [contactoId, setContactoId] = useState(initialContactId || (contactos[0]?.id || ""));
-  const [items, setItems] = useState([]);
+function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSave, onClose }) {
+  const [contactoId, setContactoId] = useState(initial?.contactoId || initialContactId || (contactos[0]?.id || ""));
+  const [items, setItems] = useState(() => (initial?.items || []).map(item => ({ ...item, id: item.id || uid() })));
   const [prod, setProd] = useState(CATALOGO[0].id);
   const [descripcion, setDescripcion] = useState(CATALOGO[0].nombre);
   const [tamano, setTamano] = useState("");
   const [cant, setCant] = useState(1);
   const [precioLista, setPrecioLista] = useState("");
   const [precio, setPrecio] = useState("");
-  const [notas, setNotas] = useState("");
-  const [estado, setEstado] = useState("Pendiente");
+  const [notas, setNotas] = useState(initial?.notas || "");
+  const [estado, setEstado] = useState(initial?.estado || "Pendiente");
+  const [editingItemId, setEditingItemId] = useState(null);
   const clienteSeleccionado = contactos.find(c => c.id === contactoId);
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precioUnitario, 0);
@@ -368,19 +374,30 @@ function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClos
   const addItem = () => {
     const p = Number(precio);
     if (precio === "" || Number.isNaN(p) || p < 0) return;
-    setItems(list => [...list, {
+    const nextItem = {
       id: uid(), productoId: prod, productoNombre: productoNombre(prod),
       descripcion: descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
       cantidad: Number(cant) || 1, precioLista: Number(precioLista) || p, precioUnitario: p,
-    }]);
+    };
+    setItems(list => editingItemId
+      ? list.map(item => item.id === editingItemId ? { ...nextItem, id: editingItemId } : item)
+      : [...list, nextItem]);
     setPrecio(""); setPrecioLista(""); setTamano(""); setCant(1);
+    setDescripcion(productoNombre(prod)); setEditingItemId(null);
+  };
+
+  const editItem = (item) => {
+    setEditingItemId(item.id); setProd(item.productoId || CATALOGO[0].id);
+    setDescripcion(nombreItem(item));
+    setTamano(item.tamano || ""); setCant(item.cantidad || 1);
+    setPrecioLista(item.precioLista ?? item.precioUnitario ?? ""); setPrecio(item.precioUnitario ?? item.precio ?? "");
   };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal quote-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>Nueva cotización</h3>
+          <h3>{initial ? `Editar cotización ${initial.numero}` : "Nueva cotización"}</h3>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="modal-body">
@@ -408,7 +425,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClos
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
-            <button className="btn-ghost small" onClick={addItem}><Plus size={14} /> Agregar</button>
+            <button className="btn-ghost small" onClick={addItem}>{editingItemId ? <><CheckCircle2 size={14} /> Actualizar</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
 
           {items.length > 0 && (
@@ -417,12 +434,12 @@ function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClos
               <tbody>
                 {items.map(it => (
                   <tr key={it.id}>
-                    <td>{it.descripcion}</td>
+                    <td>{nombreItem(it)}</td>
                     <td>{it.tamano || "—"}</td>
                     <td>{it.cantidad}</td>
                     <td>{fmtMoney(it.precioUnitario)}</td>
                     <td>{fmtMoney(it.cantidad * it.precioUnitario)}</td>
-                    <td><button className="icon-btn" onClick={() => setItems(l => l.filter(x => x.id !== it.id))}><Trash2 size={14} /></button></td>
+                    <td><div className="row"><button className="icon-btn" title="Editar producto" onClick={() => editItem(it)}><Edit3 size={14} /></button><button className="icon-btn" title="Eliminar producto" onClick={() => setItems(l => l.filter(x => x.id !== it.id))}><Trash2 size={14} /></button></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -445,8 +462,8 @@ function CotizacionModal({ contactos, initialContactId, vendedor, onSave, onClos
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn-primary" disabled={!contactoId || items.length === 0}
-            onClick={() => onSave({ contactoId, items, total, estado, notas, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] })}>
-            Guardar cotización
+            onClick={() => onSave(initial ? { ...initial, contactoId, items, total, estado, notas } : { contactoId, items, total, estado, notas, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] })}>
+            {initial ? "Guardar cambios" : "Guardar cotización"}
           </button>
         </div>
       </div>
@@ -501,7 +518,8 @@ function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
     tuberiaCaliente: "Sí", tuberiaFria: "Sí", presionAgua: "Media",
     bomba: "No", deposito: "Sí", alturaDeposito: "", conectaDeposito: "Sí",
     gradas: "Sí", entraCamion: "Sí", formaPago: "Transferencia",
-    abono: "", saldo: String(cotizacion.total || ""), observaciones: cotizacion.notas || "",
+    abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
+    garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
   });
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
   const field = (label, key, type = "text") => (
@@ -513,7 +531,7 @@ function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-head"><div><h3>Orden de pedido</h3><small>{cotizacion.numero} · {contacto?.nombre}</small></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>
+        <div className="modal-head"><div><h3>Orden de pedido {cotizacion.ordenNumero || ""}</h3><small>Basada en {cotizacion.numero} · {contacto?.nombre}</small></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>
         <div className="modal-body">
           <h4>Programación e instalación</h4>
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
@@ -521,7 +539,8 @@ function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
           <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>
           <h4>Pago y observaciones</h4>
           <div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div>
-          <label className="field-label">Promoción u observaciones</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
+          <div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div>
+          <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
         </div>
         <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" onClick={() => onGenerate(form)}><Download size={16} /> Generar orden PDF</button></div>
       </div>
@@ -529,8 +548,9 @@ function OrderFormModal({ cotizacion, contacto, onClose, onGenerate }) {
   );
 }
 
-function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate }) {
+function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate, ordenSugerida }) {
   const [showOrder, setShowOrder] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const logAction = (canal, destinatario) => {
     const registro = {
       id: uid(), canal, destinatario,
@@ -558,6 +578,7 @@ function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate }) {
 
   return (
     <div className="quote-actions">
+      <button className="btn-ghost small" onClick={() => setShowEdit(true)} title="Cambiar o agregar productos"><Edit3 size={14} /> Editar</button>
       <button className="btn-ghost small" onClick={() => downloadQuotePdf(cotizacion, contacto, LOGO_FULL)} title="Descargar cotización PDF"><Download size={14} /> PDF</button>
       <button className="btn-ghost small" onClick={sendWhatsApp} title="Abrir WhatsApp y registrar el envío"><Send size={14} /> WhatsApp</button>
       <button className="btn-ghost small" onClick={sendEmail} title="Abrir correo y registrar el envío"><Mail size={14} /> Correo</button>
@@ -567,7 +588,19 @@ function CotizacionActions({ cotizacion, contacto, currentUser, onUpdate }) {
           {(cotizacion.envios || []).length} registro{cotizacion.envios.length === 1 ? "" : "s"}
         </span>
       )}
-      {showOrder && <OrderFormModal cotizacion={cotizacion} contacto={contacto} onClose={() => setShowOrder(false)} onGenerate={(form) => { downloadOrderPdf(cotizacion, contacto, LOGO_FULL, form); logAction("Orden de pedido", "Descarga interna"); setShowOrder(false); }} />}
+      {showOrder && <OrderFormModal cotizacion={{ ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida }} contacto={contacto} onClose={() => setShowOrder(false)} onGenerate={(form) => {
+        try {
+          const quoteForOrder = { ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida };
+          downloadOrderPdf(quoteForOrder, contacto, LOGO_FULL, form);
+          const registro = { id: uid(), canal: "Orden de pedido", destinatario: "Descarga interna", fechaHora: new Date().toISOString(), usuario: currentUser.nombre };
+          onUpdate({ ...quoteForOrder, envios: [...(quoteForOrder.envios || []), registro] });
+          setShowOrder(false);
+        } catch (error) {
+          console.error("No se pudo generar la orden:", error);
+          window.alert(`No se pudo generar la orden PDF. ${error?.message || "Inténtalo nuevamente."}`);
+        }
+      }} />}
+      {showEdit && <CotizacionModal contactos={[contacto].filter(Boolean)} initialContactId={cotizacion.contactoId} vendedor={cotizacion.vendedor} initial={cotizacion} onClose={() => setShowEdit(false)} onSave={(updated) => { onUpdate(updated); setShowEdit(false); }} />}
     </div>
   );
 }
@@ -648,6 +681,9 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onUpdate, on
 function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, currentUser, onBack, onUpdateContacto, onAddCotizacion, onUpdateCotizacion, onAddSeguimiento }) {
   const [modal, setModal] = useState(null);
   const misCot = cotizaciones.filter(c => c.contactoId === contacto.id);
+  const orderYear = new Date().getFullYear();
+  const maxOrder = cotizaciones.filter(c => String(c.ordenNumero || "").startsWith(`OP-${orderYear}-`)).reduce((max, c) => Math.max(max, Number(String(c.ordenNumero).split("-").pop()) || 0), 0);
+  const ordenSugerida = `OP-${orderYear}-${String(maxOrder + 1).padStart(4, "0")}`;
   const misSeg = seguimientos.filter(s => s.contactoId === contacto.id).sort((a, b) => b.fecha.localeCompare(a.fecha));
   const Icon = canalIcon(contacto.canal);
 
@@ -688,10 +724,10 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
                 <tr key={c.id}>
                   <td><strong>{c.numero || "—"}</strong></td>
                   <td>{fmtDate(c.fecha)}</td>
-                  <td>{c.items.map(i => i.descripcion || productoNombre(i.productoId)).join(", ")}</td>
+                  <td>{c.items.map(nombreItem).join(", ")}</td>
                   <td>{fmtMoney(c.total)}</td>
                   <td><Badge estado={c.estado} /></td>
-                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} onUpdate={onUpdateCotizacion} /></td>
+                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
                 </tr>
               ))}
             </tbody>
@@ -738,6 +774,9 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
     if (filterEstado !== "todos" && c.estado !== filterEstado) return false;
     return true;
   }).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const orderYear = new Date().getFullYear();
+  const maxOrder = cotizaciones.filter(c => String(c.ordenNumero || "").startsWith(`OP-${orderYear}-`)).reduce((max, c) => Math.max(max, Number(String(c.ordenNumero).split("-").pop()) || 0), 0);
+  const ordenSugerida = `OP-${orderYear}-${String(maxOrder + 1).padStart(4, "0")}`;
 
   return (
     <div>
@@ -774,7 +813,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
                       {ESTADOS_COTIZACION.map(e => <option key={e} value={e}>{e}</option>)}
                     </select>
                   </td>
-                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} onUpdate={onUpdateCotizacion} /></td>
+                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
                 </tr>
               );
             })}

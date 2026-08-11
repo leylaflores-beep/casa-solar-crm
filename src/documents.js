@@ -3,6 +3,19 @@ import autoTable from "jspdf-autotable";
 
 const money = (value) => `Q ${Number(value || 0).toLocaleString("es-GT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const prettyDate = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDateString("es-GT", { day: "numeric", month: "long", year: "numeric" }) : "-";
+const itemName = (item) => {
+  const description = String(item?.descripcion || "").trim();
+  if (description && description.toLowerCase() !== "producto") return description;
+  return item?.productoNombre || item?.producto || item?.nombre || item?.productoId || "Producto sin especificar";
+};
+const savePdf = (doc, filename) => {
+  const blob = doc.output("blob");
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = filename;
+  document.body.appendChild(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+};
 
 export function downloadQuotePdf(quote, contact, logo) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -56,7 +69,7 @@ export function downloadQuotePdf(quote, contact, logo) {
 
   const body = quote.items.map(item => [
     item.cantidad,
-    `${item.descripcion || item.productoNombre || "Producto"}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
+    `${itemName(item)}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
     money(item.precioLista || item.precioUnitario),
     money(item.precioUnitario),
     money(item.cantidad * item.precioUnitario),
@@ -89,18 +102,19 @@ export function downloadQuotePdf(quote, contact, logo) {
   doc.text(conditions, 62, y + 26);
   doc.setDrawColor(...red); doc.line(60, 275, 198, 275);
   doc.setTextColor(...red); doc.setFont("helvetica", "bold"); doc.text("ACEPTAMOS TARJETAS DE CRÉDITO, DÉBITO Y TRANSFERENCIA", 62, 283);
-  doc.save(`${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  savePdf(doc, `${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
 }
 
 export function downloadOrderPdf(quote, contact, logo, order = {}) {
   const doc = new jsPDF({ unit: "mm", format: [216, 330] });
   const client = contact || quote.cliente || {};
   const black = [20, 20, 20];
-  doc.addImage(logo, "PNG", 12, 10, 64, 11);
+  doc.addImage(logo, "PNG", 12, 10, 52, 9);
   doc.setTextColor(...black); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text("O R D E N  D E  P E D I D O", 108, 21, { align: "center" });
   doc.setFontSize(7); doc.text("CORPORACIÓN THERMAL S. A.  |  Plaza Pericentro zona 8, Quetzaltenango  |  PBX 7767 5949", 12, 31);
   doc.setDrawColor(...black); doc.setLineWidth(0.6); doc.line(12, 36, 204, 36);
-  doc.setFontSize(9); doc.text(`N.º ${quote.numero.replace("CS-", "OP-")}`, 202, 29, { align: "right" });
+  const orderNumber = quote.ordenNumero || quote.numero.replace("CS-", "OP-");
+  doc.setFontSize(9); doc.text(`N.º ${orderNumber}`, 202, 29, { align: "right" });
 
   const section = (x, y, w, title) => {
     doc.setFillColor(...black); doc.rect(x, y, w, 7, "F");
@@ -128,7 +142,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
 
   section(12, 93, 92, "DESCRIPCIÓN DEL PRODUCTO");
   const orderItems = quote.items.slice(0, 16).map(item => [
-    `${item.descripcion || item.productoNombre || "Producto"}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
+    `${itemName(item)}${item.tamano ? ` - Tamaño: ${item.tamano}` : ""}`,
     item.cantidad,
     money(item.precioUnitario),
   ]);
@@ -175,11 +189,16 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   const paymentMethods = ["Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque", "Contado", "Transferencia"];
   paymentMethods.forEach((p, i) => doc.text(`${p === order.formaPago ? "[X]" : "[ ]"} ${p}${p === order.formaPago ? `  Abono ${money(order.abono)}  Saldo ${money(order.saldo)}` : ""}`, 112, 262 + i * 8));
 
-  section(12, 286, 92, "PROMOCIÓN / OBSERVACIONES");
+  section(12, 286, 92, "PROMOCIÓN / GARANTÍA / OBSERVACIONES");
   doc.setDrawColor(160); doc.rect(12, 293, 92, 23);
-  doc.setFontSize(6); doc.text(doc.splitTextToSize(order.observaciones || quote.notas || "", 86), 15, 299);
+  doc.setFontSize(6); doc.setFont("helvetica", "bold"); doc.text("Promoción:", 15, 298);
+  doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(order.promocion || "Sin promoción", 68), 34, 298);
+  doc.setFont("helvetica", "bold"); doc.text("Garantía:", 15, 304);
+  doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(order.garantia || "Según condiciones del producto", 68), 34, 304);
+  doc.setFont("helvetica", "bold"); doc.text("Observaciones:", 15, 310);
+  doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(order.observaciones || quote.notas || "", 64), 38, 310);
   doc.setFontSize(5.5); doc.text("Los pagos realizados no son reembolsables. Equipo sujeto a disponibilidad. Cambios de instalación pueden generar costos adicionales.", 108, 309, { maxWidth: 94 });
   doc.line(18, 322, 65, 322); doc.line(84, 322, 131, 322); doc.line(150, 322, 198, 322);
   doc.setFontSize(6); doc.text("Firma del cliente", 41, 326, { align: "center" }); doc.text("Firma del asesor", 107, 326, { align: "center" }); doc.text("Firma de Operaciones", 174, 326, { align: "center" });
-  doc.save(`Orden-${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  savePdf(doc, `${orderNumber}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
 }
