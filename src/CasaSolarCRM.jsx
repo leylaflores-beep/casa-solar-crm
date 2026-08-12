@@ -205,7 +205,8 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "catalogo", label: "Catálogo", icon: Package },
   ];
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
-  const pendingDiscounts = descuentoSolicitudes.filter(request => request.estado === "Pendiente").length;
+  const queuedPendingIds = new Set(descuentoSolicitudes.filter(request => request.estado === "Pendiente").map(request => request.id));
+  const pendingDiscounts = queuedPendingIds.size + cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente" && !queuedPendingIds.has(quote.descuentoSolicitud.id)).length;
   const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
   if (canReviewDiscounts) items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
   if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
@@ -1485,7 +1486,22 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
 
 function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUser, onUpdate }) {
   const [selected, setSelected] = useState(null);
-  const pending = solicitudes.filter(request => request.estado === "Pendiente").sort((a, b) => String(b.solicitadoEn || "").localeCompare(String(a.solicitadoEn || "")));
+  const pendingMap = new Map();
+  solicitudes.filter(request => request.estado === "Pendiente").forEach(request => pendingMap.set(request.id, request));
+  cotizaciones.forEach(quote => {
+    const request = quote.descuentoSolicitud;
+    if (request?.estado === "Pendiente") pendingMap.set(request.id, {
+      ...request,
+      ...(pendingMap.get(request.id) || {}),
+      cotizacionId: quote.id,
+      numero: quote.numero,
+      contactoId: quote.contactoId,
+      contactoNombre: quote.contactoNombre,
+      vendedor: quote.vendedor,
+      totalBase: quote.totalOriginal ?? quote.total,
+    });
+  });
+  const pending = [...pendingMap.values()].sort((a, b) => String(b.solicitadoEn || "").localeCompare(String(a.solicitadoEn || "")));
   const selectedRequest = pending.find(request => request.id === selected);
   const quote = selectedRequest ? cotizaciones.find(item => item.id === selectedRequest.cotizacionId) : null;
   return <div><div className="page-head"><h2>Descuentos pendientes</h2><p>Solicitudes enviadas por los vendedores para autorización.</p></div>
