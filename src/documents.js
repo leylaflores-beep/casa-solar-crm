@@ -131,6 +131,9 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   doc.setDrawColor(...black); doc.setLineWidth(0.6); doc.line(12, 36, 204, 36);
   const orderNumber = quote.ordenNumero || quote.numero.replace("CS-", "OP-");
   doc.setFontSize(9); doc.text(`N.º ${orderNumber}`, 202, 29, { align: "right" });
+  if (order.estadoPago === "Cancelado") {
+    doc.setTextColor(20, 120, 60); doc.setFontSize(12); doc.text("CANCELADO", 202, 35, { align: "right" }); doc.setTextColor(...black);
+  }
 
   const section = (x, y, w, title) => {
     doc.setFillColor(...black); doc.rect(x, y, w, 7, "F");

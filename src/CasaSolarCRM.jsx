@@ -4,7 +4,7 @@ import {
   ClipboardList, LayoutDashboard, Plus, Search, X, LogOut, Settings,
   TrendingUp, Wrench, Trash2, Edit3, ChevronRight, CheckCircle2, Clock,
   ArrowLeft, Package, Filter, Download, Mail, ShoppingCart, Send, Megaphone, Upload,
-  Calculator, MapPin, BadgePercent, ShieldCheck, BarChart3
+  Calculator, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays
 } from "lucide-react";
 import {
   getSharedData,
@@ -98,9 +98,22 @@ const ESTADO_COLOR = {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const seguimientoOrden = (s) => s.fechaHora || `${s.fecha || ""}T00:00:00`;
 const fmtMoney = (n) => new Intl.NumberFormat("es-GT", { style: "currency", currency: "GTQ", maximumFractionDigits: 2 }).format(n || 0);
 const canalIcon = (canal) => (CANALES.find(c => c.id === canal) || CANALES[CANALES.length - 1]).icon;
 const productoNombre = (id) => (CATALOGO.find(p => p.id === id) || {}).nombre || id;
+const categoriaProducto = (id) => {
+  if (id === "calentadores") return "Calentadores";
+  if (id === "accesorios") return "Accesorios";
+  if (id === "kit") return "Kits";
+  if (["alumbrado_publico", "iluminacion_jardin"].includes(id)) return "Iluminación";
+  if (["mantenimiento", "correctivo"].includes(id)) return "Servicios";
+  if (["proyecto_aislado", "proyecto_red"].includes(id)) return "Proyectos";
+  if (["visita_revision", "visita_correctiva"].includes(id)) return "Visitas";
+  if (String(id || "").startsWith("estructura_")) return "Estructuras";
+  return "Otros";
+};
+const CATEGORIAS_PRODUCTO = ["Calentadores", "Accesorios", "Iluminación", "Kits", "Servicios", "Proyectos", "Visitas", "Estructuras", "Otros"];
 const nombreItem = (item) => {
   if (item?.productoId === "transporte_ruta") return "Transporte";
   const descripcion = String(item?.descripcion || "").trim();
@@ -178,11 +191,9 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function Sidebar({ tab, setTab, currentUser, onLogout }) {
+function Sidebar({ tab, setTab, currentUser, cotizaciones = [], onLogout }) {
   const operationalRole = ["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].includes(currentUser.rol);
-  const items = operationalRole ? [
-    { id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench },
-  ] : [
+  const items = operationalRole ? [] : [
     { id: "dashboard", label: "Panel", icon: LayoutDashboard },
     { id: "contactos", label: "Contactos", icon: Users2 },
     { id: "calculadora", label: "Calculadora de rutas", icon: Calculator },
@@ -192,7 +203,13 @@ function Sidebar({ tab, setTab, currentUser, onLogout }) {
     { id: "campanas", label: "Campañas", icon: Megaphone },
     { id: "catalogo", label: "Catálogo", icon: Package },
   ];
-  if (currentUser.rol === "Jefe") items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
+  if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
+  const pendingDiscounts = cotizaciones.filter(q => q.descuentoSolicitud?.estado === "Pendiente").length;
+  if (currentUser.rol === "Jefe") items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
+  if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
+  if (["Jefe", "Bodega"].includes(currentUser.rol)) items.push({ id: "bodega", label: "Bodega", icon: Package });
+  if (["Jefe", "Facturación"].includes(currentUser.rol)) items.push({ id: "facturacion", label: "Facturación", icon: FileText });
+  if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "planificacion", label: "Planificación", icon: CalendarDays });
   if (currentUser.rol === "Jefe") items.push({ id: "equipo", label: "Equipo", icon: Settings });
 
   return (
@@ -200,7 +217,7 @@ function Sidebar({ tab, setTab, currentUser, onLogout }) {
       <div className="brand"><img src={LOGO_ICON} alt="Casa Solar" className="brand-icon" /><span>Casa Solar</span></div>
       <nav>
         {items.map(it => (
-          <button key={it.id} className={"nav-item" + (tab === it.id ? " active" : "")} onClick={() => setTab(it.id)}>
+          <button key={it.id} className={"nav-item" + (tab === it.id ? " active" : "") + (it.alert ? " nav-alert" : "")} onClick={() => setTab(it.id)}>
             <it.icon size={17} /> {it.label}
           </button>
         ))}
@@ -564,6 +581,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const [contactoId, setContactoId] = useState(savedDraft.contactoId || initial?.contactoId || initialContactId || (contactos[0]?.id || ""));
   const [items, setItems] = useState(() => (savedDraft.items || initial?.items || []).map(item => ({ ...item, id: item.id || uid() })));
   const [prod, setProd] = useState(savedDraft.prod || CATALOGO[0].id);
+  const [categoria, setCategoria] = useState(savedDraft.categoria || categoriaProducto(savedDraft.prod || CATALOGO[0].id));
   const [descripcion, setDescripcion] = useState(savedDraft.descripcion || CATALOGO[0].nombre);
   const [tamano, setTamano] = useState(savedDraft.tamano || "");
   const [altura, setAltura] = useState(savedDraft.altura || "");
@@ -582,8 +600,8 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precioUnitario, 0);
   useEffect(() => {
-    saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
-  }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
+    saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
+  }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
   const saveQuote = () => {
     clearDraft(draftKey);
     const commercial = { promocion: promocion.trim(), garantiaAnios: Number(garantiaAnios) || "", garantia: garantiaAnios ? `${Number(garantiaAnios)} años` : "" };
@@ -594,7 +612,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
     const p = Number(precio);
     if (precio === "" || Number.isNaN(p) || p < 0) return;
     const nextItem = {
-      id: uid(), productoId: prod, productoNombre: productoNombre(prod),
+      id: uid(), productoId: prod, productoNombre: productoNombre(prod), categoria,
       descripcion: descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
       altura: altura.trim(), compatibilidad: compatibilidad.trim(),
       cantidad: Number(cant) || 1, precioLista: Number(precioLista) || p, precioUnitario: p,
@@ -607,7 +625,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   };
 
   const editItem = (item) => {
-    setEditingItemId(item.id); setProd(item.productoId || CATALOGO[0].id);
+    setEditingItemId(item.id); setProd(item.productoId || CATALOGO[0].id); setCategoria(item.categoria || categoriaProducto(item.productoId));
     setDescripcion(nombreItem(item));
     setTamano(item.tamano || ""); setCant(item.cantidad || 1);
     setAltura(item.altura || ""); setCompatibilidad(item.compatibilidad || "");
@@ -646,7 +664,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
 
           <label className="field-label">Agregar producto o servicio</label>
           <div className="item-row quote-item-grid">
-            <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
+            <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {CATALOGO.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
             <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Descripción específica" />
@@ -656,15 +674,17 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
             <button className="btn-ghost small" onClick={addItem}>{editingItemId ? <><CheckCircle2 size={14} /> Actualizar</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
+          <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
 
           {items.length > 0 && (
             <table className="table small">
-              <thead><tr><th>Producto</th><th>Tamaño</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead>
+              <thead><tr><th>Producto</th><th>Categoría</th><th>Tamaño</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead>
               <tbody>
                 {items.map(it => (
                   <tr key={it.id}>
                     <td>{nombreItem(it)}</td>
+                    <td>{it.categoria || categoriaProducto(it.productoId)}</td>
                     <td>{[it.tamano, it.altura && `Altura: ${it.altura}`, it.compatibilidad && `Para: ${it.compatibilidad}`].filter(Boolean).join(" · ") || "—"}</td>
                     <td>{it.cantidad}</td>
                     <td>{fmtMoney(it.precioUnitario)}</td>
@@ -735,7 +755,7 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn-primary" disabled={!contactoId || !notas.trim()}
-            onClick={() => onSave({ contactoId, tipo, notas, proximoSeguimiento: proximo, vendedor, fecha: todayISO() })}>
+            onClick={() => onSave({ contactoId, tipo, notas, proximoSeguimiento: proximo, vendedor, fecha: todayISO(), fechaHora: new Date().toISOString() })}>
             Guardar seguimiento
           </button>
         </div>
@@ -757,7 +777,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     instalacionesAdicionales: "", distanciaAdicional: "",
     bomba: "No", deposito: "Sí", alturaDeposito: "", conectaDeposito: "Sí",
     gradas: "Sí", entraCamion: "Sí", formaPago: "Transferencia",
-    abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
+    estadoPago: "Pendiente", abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
     garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
     evidenciasFotograficas: "",
     tipoServicio: "Mantenimiento", equipoExistente: "", fallaReportada: "", servicioRequerido: "", materialesServicio: "",
@@ -772,7 +792,11 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     if (!["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"].includes(draft.medidaTuberiaFria)) draft.medidaTuberiaFria = "PVC 1/2 pulgada";
     return draft;
   });
-  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const set = (key, value) => setForm(prev => ({
+    ...prev, [key]: value,
+    ...(key === "estadoPago" && value === "Abonado" && !prev.fechaAnticipo ? { fechaAnticipo: todayISO() } : {}),
+    ...(key === "estadoPago" && value === "Cancelado" && !prev.fechaCancelado ? { fechaCancelado: todayISO(), saldo: "0" } : {}),
+  }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
   const generateOrder = () => { clearDraft(draftKey); onGenerate(form); };
   const saveOrder = () => { clearDraft(draftKey); onSave?.(form); };
@@ -816,7 +840,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           {form.tipoOrden === "Revisión técnica" && <div className="form-grid">{field("Motivo de la revisión", "motivoRevision")}{field("Equipo o sistema a revisar", "equipoExistente")}{field("Diagnóstico preliminar", "diagnosticoPreliminar")}{field("Mediciones necesarias", "medicionesTecnicas")}{select("Acceso al techo", "accesoTecho", ["Sí", "No", "Por confirmar"])}{field("Riesgos o condiciones especiales", "riesgosDetectados")}</div>}
           {form.tipoOrden === "Iluminación" && <div className="form-grid">{field("Área a iluminar (m²)", "areaIluminar", "number")}{field("Altura de instalación", "alturaInstalacionLuz")}{field("Cantidad de luminarias", "cantidadLuminarias", "number")}{field("Potencia de luminaria (W)", "potenciaLuminaria", "number")}{field("Ubicación del panel solar", "ubicacionPanelSolar")}{field("Horas de iluminación requeridas", "horasIluminacion")}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
           <h4>{isTechnicalArea ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
-          {!isTechnicalArea && <><div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div><div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
+          {!isTechnicalArea && <><div className="form-grid">{select("Estado del pago", "estadoPago", ["Pendiente", "Abonado", "Cancelado"])}{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div>{form.estadoPago === "Cancelado" && <div className="paid-order-banner"><CheckCircle2 size={18} /> CANCELADO · Cliente pagó el total</div>}<div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
           <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
           <label className="field-label">Evidencias fotográficas (enlaces de Google Drive)</label>
           <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
@@ -1213,16 +1237,56 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
   );
 }
 
+function SeguimientoHiloModal({ contacto, seguimientos, onClose, onAdd }) {
+  const historial = [...seguimientos].sort((a, b) => seguimientoOrden(a).localeCompare(seguimientoOrden(b)));
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal follow-thread-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-head">
+          <div><h3>Hilo de seguimiento</h3><small>{contacto?.nombre || historial[0]?.contactoNombre} · {historial.length} registro{historial.length === 1 ? "" : "s"}</small></div>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body follow-thread">
+          {historial.map((s, index) => (
+            <div className="follow-message" key={s.id}>
+              <div className="follow-dot"><ClipboardList size={14} /></div>
+              <div className="follow-bubble">
+                <div className="follow-meta"><strong>{s.tipo}</strong><span>{fmtDate(s.fecha)} · {s.vendedor}</span></div>
+                <p>{s.notas}</p>
+                {s.proximoSeguimiento && <small><Clock size={12} /> Próximo seguimiento: {fmtDate(s.proximoSeguimiento)}</small>}
+              </div>
+              {index < historial.length - 1 && <span className="follow-line" />}
+            </div>
+          ))}
+        </div>
+        <div className="modal-foot">
+          <button className="btn-ghost" onClick={onClose}>Cerrar</button>
+          <button className="btn-primary" onClick={onAdd}><Plus size={16} /> Agregar al hilo</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SeguimientosView({ seguimientos, contactos, currentUser, onAdd }) {
-  const [showModal, setShowModal] = useState(false);
+  const [newContactId, setNewContactId] = useState("");
+  const [threadContactId, setThreadContactId] = useState("");
   const visibles = seguimientos.filter(s => currentUser.rol === "Jefe" || s.vendedor === currentUser.nombre)
-    .sort((a, b) => b.fecha.localeCompare(a.fecha));
+    .sort((a, b) => seguimientoOrden(b).localeCompare(seguimientoOrden(a)));
+  const hilos = Object.values(visibles.reduce((acc, s) => {
+    const key = s.contactoId;
+    if (!acc[key]) acc[key] = { contactoId: key, contactoNombre: s.contactoNombre, registros: [] };
+    acc[key].registros.push(s);
+    return acc;
+  }, {})).sort((a, b) => seguimientoOrden(b.registros[0]).localeCompare(seguimientoOrden(a.registros[0])));
+  const threadContact = contactos.find(c => c.id === threadContactId);
+  const threadRecords = visibles.filter(s => s.contactoId === threadContactId);
 
   return (
     <div>
       <div className="page-head row">
         <div><h2>Seguimientos</h2><p>Historial de contacto con cada cliente.</p></div>
-        <button className="btn-primary" onClick={() => setShowModal(true)} disabled={contactos.length === 0}>
+        <button className="btn-primary" onClick={() => setNewContactId("__nuevo__")} disabled={contactos.length === 0}>
           <Plus size={16} /> Nuevo seguimiento
         </button>
       </div>
@@ -1230,22 +1294,30 @@ function SeguimientosView({ seguimientos, contactos, currentUser, onAdd }) {
         <div className="empty-state">Todavía no hay seguimientos registrados.</div>
       ) : (
         <div className="card-list">
-          {visibles.map(s => (
-            <div key={s.id} className="seg-row">
+          {hilos.map(hilo => {
+            const ultimo = hilo.registros[0];
+            const proximo = hilo.registros.find(s => s.proximoSeguimiento)?.proximoSeguimiento;
+            return <div key={hilo.contactoId} className="seg-row follow-client-row">
               <div className="channel-icon"><ClipboardList size={16} /></div>
               <div className="contact-main">
-                <div className="contact-name">{s.contactoNombre}</div>
-                <div className="contact-sub">{s.tipo} · {s.vendedor}</div>
-                <div className="contact-sub">{s.notas}</div>
+                <div className="contact-name">{hilo.contactoNombre}</div>
+                <div className="contact-sub">{hilo.registros.length} seguimiento{hilo.registros.length === 1 ? "" : "s"} · Último: {ultimo.tipo}</div>
+                <div className="contact-sub follow-preview">{ultimo.notas}</div>
+                {proximo && <div className="contact-sub follow-next">Próximo: {fmtDate(proximo)}</div>}
               </div>
-              <div className="contact-date muted">{fmtDate(s.fecha)}</div>
-            </div>
-          ))}
+              <div className="contact-date muted">{fmtDate(ultimo.fecha)}</div>
+              <button className="btn-ghost small follow-open" onClick={() => setThreadContactId(hilo.contactoId)}>Ver hilo</button>
+            </div>;
+          })}
         </div>
       )}
-      {showModal && (
-        <SeguimientoModal contactos={contactos} vendedor={currentUser.nombre}
-          onClose={() => setShowModal(false)} onSave={(data) => { onAdd(data); setShowModal(false); }} />
+      {threadContactId && (
+        <SeguimientoHiloModal contacto={threadContact} seguimientos={threadRecords}
+          onClose={() => setThreadContactId("")} onAdd={() => { setNewContactId(threadContactId); setThreadContactId(""); }} />
+      )}
+      {newContactId && (
+        <SeguimientoModal contactos={contactos} initialContactId={newContactId === "__nuevo__" ? "" : newContactId} vendedor={currentUser.nombre}
+          onClose={() => setNewContactId("")} onSave={(data) => { onAdd(data); setNewContactId(""); }} />
       )}
     </div>
   );
@@ -1390,6 +1462,39 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
   </div>;
 }
 
+function DiscountRequestsView({ cotizaciones, contactos, currentUser, onUpdate }) {
+  const [selected, setSelected] = useState(null);
+  const pending = cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente");
+  const quote = selected ? cotizaciones.find(item => item.id === selected) : null;
+  return <div><div className="page-head"><h2>Descuentos pendientes</h2><p>Solicitudes enviadas por los vendedores para autorización.</p></div>
+    <div className="section-card">{pending.length === 0 ? <div className="empty-state">No hay descuentos pendientes de revisión.</div> : <table className="table"><thead><tr><th>Fecha</th><th>Vendedor</th><th>Cliente</th><th>Cotización</th><th>Descuento</th><th>Motivo</th><th></th></tr></thead><tbody>{pending.map(item => { const request = item.descuentoSolicitud; return <tr key={item.id}><td>{new Date(request.solicitadoEn).toLocaleDateString("es-GT")}</td><td>{request.solicitadoPor}</td><td>{contactos.find(c => c.id === item.contactoId)?.nombre || item.contactoNombre}</td><td>{item.numero}</td><td>{request.tipo === "Porcentaje" ? `${request.valor}%` : fmtMoney(request.monto)}</td><td>{request.motivo}</td><td><button className="btn-primary" onClick={() => setSelected(item.id)}>Revisar</button></td></tr>; })}</tbody></table>}</div>
+    {quote && <DiscountAuthorizationModal cotizacion={quote} currentUser={currentUser} onClose={() => setSelected(null)} onUpdate={updated => { onUpdate(updated); setSelected(null); }} />}
+  </div>;
+}
+
+function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }) {
+  const orders = cotizaciones.filter(quote => quote.ordenPedido);
+  const updateOrder = (quote, fields, action) => {
+    const history = [...(quote.ordenFlujo?.historial || []), { accion: action, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+    onUpdate({ ...quote, ordenPedido: { ...quote.ordenPedido, ...fields }, ordenFlujo: { ...(quote.ordenFlujo || {}), historial: history } });
+  };
+  const contactName = quote => contactos.find(c => c.id === quote.contactoId)?.nombre || quote.contactoNombre || "Sin cliente";
+  if (mode === "programacion") {
+    const scheduled = orders.filter(q => q.ordenPedido.fechaInstalacion).sort((a,b) => a.ordenPedido.fechaInstalacion.localeCompare(b.ordenPedido.fechaInstalacion));
+    const pending = orders.filter(q => !q.ordenPedido.fechaInstalacion);
+    const rows = list => list.map(q => <tr key={q.id}><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{contactName(q)}</td><td>{q.ordenPedido.tipoOrden}</td><td><input className="input compact" type="date" value={q.ordenPedido.fechaInstalacion || ""} onChange={e => updateOrder(q,{fechaInstalacion:e.target.value},"Fecha programada actualizada")} /></td><td><select className="input compact" value={q.ordenPedido.horario || "Por confirmar"} onChange={e => updateOrder(q,{horario:e.target.value},"Horario actualizado")}><option>Mañana</option><option>Tarde</option><option>Por confirmar</option></select></td><td>{q.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"}</td></tr>);
+    return <div><div className="page-head"><h2>Programación</h2><p>Órdenes organizadas por fecha programada.</p></div><div className="section-card"><h3>Pendientes sin fecha ({pending.length})</h3>{pending.length ? <table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(pending)}</tbody></table> : <div className="empty-state">No hay órdenes pendientes.</div>}</div><div className="section-card"><h3>Órdenes programadas</h3><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(scheduled)}</tbody></table></div></div>;
+  }
+  if (mode === "bodega") return <div><div className="page-head"><h2>Bodega</h2><p>Equipos que deben prepararse y despacharse.</p></div><div className="section-card"><table className="table"><thead><tr><th>Fecha</th><th>Orden</th><th>Vendedor</th><th>Equipos</th><th>Estado de despacho</th></tr></thead><tbody>{orders.sort((a,b)=>(a.ordenPedido.fechaInstalacion||"9999").localeCompare(b.ordenPedido.fechaInstalacion||"9999")).map(q => <tr key={q.id}><td>{q.ordenPedido.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : "Pendiente"}</td><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{q.vendedor}</td><td>{q.items.filter(i=>i.productoId!=="transporte_ruta").map(i=>`${i.cantidad} × ${nombreItem(i)}`).join(", ")}</td><td><select className="input compact" value={q.ordenPedido.estadoBodega || "Pendiente"} onChange={e=>updateOrder(q,{estadoBodega:e.target.value},`Bodega: ${e.target.value}`)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></td></tr>)}</tbody></table></div></div>;
+  return <div><div className="page-head"><h2>Facturación</h2><p>Facturas que deben generarse para los clientes.</p></div><div className="section-card"><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>NIT</th><th>Total</th><th>Pago</th><th>Factura</th><th>Número</th></tr></thead><tbody>{orders.map(q => { const c=contactos.find(x=>x.id===q.contactoId)||q.cliente||{}; return <tr key={q.id}><td>{q.ordenNumero||q.numero.replace("CS-","OP-")}</td><td>{c.nombre||q.contactoNombre}</td><td>{c.nit||q.ordenPedido.nit||"C/F"}</td><td>{fmtMoney(q.total)}</td><td>{q.ordenPedido.estadoPago||"Pendiente"}</td><td><select className="input compact" value={q.ordenPedido.estadoFactura||"Pendiente"} onChange={e=>updateOrder(q,{estadoFactura:e.target.value},`Facturación: ${e.target.value}`)}><option>Pendiente</option><option>En proceso</option><option>Generada</option><option>Enviada al cliente</option></select></td><td><input className="input compact" value={q.ordenPedido.numeroFactura||""} onChange={e=>updateOrder(q,{numeroFactura:e.target.value},"Número de factura actualizado")} placeholder="Serie / número" /></td></tr>;})}</tbody></table></div></div>;
+}
+
+function PlanningView({ cotizaciones, contactos }) {
+  const [view, setView] = useState("Día"); const [date, setDate] = useState(todayISO());
+  const orders = cotizaciones.filter(q=>q.ordenPedido?.fechaInstalacion).filter(q=>{ const d=q.ordenPedido.fechaInstalacion; if(view==="Día") return d===date; if(view==="Semana"){ const start=new Date(`${date}T12:00:00`); start.setDate(start.getDate()-start.getDay()+1); const end=new Date(start); end.setDate(end.getDate()+6); return d>=start.toISOString().slice(0,10)&&d<=end.toISOString().slice(0,10);} return d.slice(0,7)===date.slice(0,7); }).sort((a,b)=>(a.ordenPedido.horario||"").localeCompare(b.ordenPedido.horario||""));
+  return <div><div className="page-head"><h2>Planificación</h2><p>Consulta la agenda por día, semana, mes y horario.</p></div><div className="section-card planning-filters"><div className="role-toggle">{["Día","Semana","Mes"].map(v=><button key={v} className={view===v?"active":""} onClick={()=>setView(v)}>{v}</button>)}</div><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div><div className="section-card">{orders.length===0?<div className="empty-state">No hay actividades para el periodo.</div>:<div className="timeline-list">{orders.map(q=><div className="timeline-item" key={q.id}><strong>{q.ordenPedido.horario||"Por confirmar"}</strong><div><h3>{contactos.find(c=>c.id===q.contactoId)?.nombre||q.contactoNombre}</h3><p>{fmtDate(q.ordenPedido.fechaInstalacion)} · {q.ordenPedido.tipoOrden} · {q.ordenPedido.tecnicoAsignadoNombre||"Sin técnico"}</p></div></div>)}</div>}</div></div>;
+}
+
 function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
   const now = new Date();
   const [periodType, setPeriodType] = useState("Mes");
@@ -1399,24 +1504,29 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
   const [to, setTo] = useState(todayISO());
   const [seller, setSeller] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
   const sellerUsers = vendedores.filter(user => ["Vendedor", "Jefe"].includes(user.rol || "Vendedor"));
-  const accepted = cotizaciones.filter(quote => {
-    if (quote.estado !== "Aceptada") return false;
+  const inPeriod = dateValue => {
+    const date = String(dateValue || "").slice(0, 10);
+    if (periodType === "Mes") return date.startsWith(month);
+    if (periodType === "Año") return date.startsWith(year);
+    return (!from || date >= from) && (!to || date <= to);
+  };
+  const sold = cotizaciones.filter(quote => {
+    if (quote.estado !== "Aceptada" && quote.ordenPedido?.estadoPago !== "Cancelado") return false;
     if (currentUser.rol !== "Jefe" && quote.vendedor !== currentUser.nombre) return false;
     if (seller !== "todos" && quote.vendedor !== seller) return false;
-    const saleDate = String(quote.fechaVenta || quote.fecha || "").slice(0, 10);
-    if (periodType === "Mes") return saleDate.startsWith(month);
-    if (periodType === "Año") return saleDate.startsWith(year);
-    return (!from || saleDate >= from) && (!to || saleDate <= to);
+    return inPeriod(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha);
   });
-  const total = accepted.reduce((sum, quote) => sum + Number(quote.total || 0), 0);
-  const average = accepted.length ? total / accepted.length : 0;
-  const sellerRows = [...new Set(accepted.map(quote => quote.vendedor || "Sin vendedor"))].map(name => {
-    const rows = accepted.filter(quote => (quote.vendedor || "Sin vendedor") === name);
+  const advances = cotizaciones.filter(quote => quote.ordenPedido?.fechaAnticipo && Number(quote.ordenPedido?.abono || 0) > 0 && inPeriod(quote.ordenPedido.fechaAnticipo) && (currentUser.rol === "Jefe" || quote.vendedor === currentUser.nombre) && (seller === "todos" || quote.vendedor === seller));
+  const advanceAmount = advances.reduce((sum, quote) => sum + Number(quote.ordenPedido?.abono || 0), 0);
+  const total = sold.reduce((sum, quote) => sum + Number(quote.total || 0), 0);
+  const average = sold.length ? total / sold.length : 0;
+  const sellerRows = [...new Set(sold.map(quote => quote.vendedor || "Sin vendedor"))].map(name => {
+    const rows = sold.filter(quote => (quote.vendedor || "Sin vendedor") === name);
     return { name, count: rows.length, total: rows.reduce((sum, quote) => sum + Number(quote.total || 0), 0) };
   }).sort((a, b) => b.total - a.total);
   const groups = {};
-  accepted.forEach(quote => {
-    const date = String(quote.fechaVenta || quote.fecha || "").slice(0, 10);
+  sold.forEach(quote => {
+    const date = String(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha || "").slice(0, 10);
     const key = periodType === "Año" ? date.slice(5, 7) : date.slice(8, 10);
     groups[key] = (groups[key] || 0) + Number(quote.total || 0);
   });
@@ -1425,8 +1535,15 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
     value,
   }));
   const maxChart = Math.max(1, ...chartData.map(item => item.value));
+  const productMap = {};
+  sold.forEach(quote => (quote.items || []).filter(item => item.productoId !== "transporte_ruta").forEach(item => {
+    const product = nombreItem(item); const category = item.categoria || categoriaProducto(item.productoId); const key = `${category}|${product}`;
+    if (!productMap[key]) productMap[key] = { product, category, quantity: 0, total: 0 };
+    productMap[key].quantity += Number(item.cantidad || 0); productMap[key].total += Number(item.cantidad || 0) * Number(item.precioUnitario || 0);
+  }));
+  const productRows = Object.values(productMap).sort((a,b) => b.total - a.total);
   return <div className="sales-report printable-report">
-    <div className="page-head report-head"><div><h2>Reportes de ventas</h2><p>Se consideran ventas las cotizaciones con estado “Aceptada”.</p></div><button className="btn-primary" onClick={() => window.print()}><Download size={16} /> Imprimir o guardar PDF</button></div>
+    <div className="page-head report-head"><div><h2>Reportes de ventas</h2><p>Incluye cotizaciones aceptadas y órdenes con pago “Cancelado”.</p></div><button className="btn-primary" onClick={() => window.print()}><Download size={16} /> Imprimir o guardar PDF</button></div>
     <div className="section-card report-filters">
       <label><span className="field-label">Periodo</span><select className="input" value={periodType} onChange={e => setPeriodType(e.target.value)}><option>Mes</option><option>Año</option><option>Rango de fechas</option></select></label>
       {periodType === "Mes" && <label><span className="field-label">Mes</span><input className="input" type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>}
@@ -1434,10 +1551,11 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
       {periodType === "Rango de fechas" && <><label><span className="field-label">Desde</span><input className="input" type="date" value={from} onChange={e => setFrom(e.target.value)} /></label><label><span className="field-label">Hasta</span><input className="input" type="date" value={to} onChange={e => setTo(e.target.value)} /></label></>}
       {currentUser.rol === "Jefe" && <label><span className="field-label">Vendedor</span><select className="input" value={seller} onChange={e => setSeller(e.target.value)}><option value="todos">Ventas generales</option>{sellerUsers.map(user => <option key={user.id || user.nombre} value={user.nombre}>{user.nombre}</option>)}</select></label>}
     </div>
-    <div className="kpi-grid report-kpis"><div className="kpi-card"><div className="kpi-label">Ventas cerradas</div><div className="kpi-value">{accepted.length}</div></div><div className="kpi-card"><div className="kpi-label">Monto vendido</div><div className="kpi-value">{fmtMoney(total)}</div></div><div className="kpi-card"><div className="kpi-label">Venta promedio</div><div className="kpi-value">{fmtMoney(average)}</div></div><div className="kpi-card"><div className="kpi-label">Mejor vendedor</div><div className="kpi-value report-name">{sellerRows[0]?.name || "Sin ventas"}</div></div></div>
-    <div className="section-card"><h3>Rendimiento del periodo</h3>{chartData.length === 0 ? <div className="empty-state">No hay ventas aceptadas en el periodo seleccionado.</div> : <div className="sales-chart">{chartData.map(item => <div className="sales-bar-row" key={item.label}><span>{item.label}</span><div className="sales-bar-track"><div className="sales-bar" style={{ width: `${Math.max(3, item.value / maxChart * 100)}%` }} /></div><strong>{fmtMoney(item.value)}</strong></div>)}</div>}</div>
+    <div className="kpi-grid report-kpis"><div className="kpi-card"><div className="kpi-label">Ventas cerradas</div><div className="kpi-value">{sold.length}</div></div><div className="kpi-card"><div className="kpi-label">Monto vendido</div><div className="kpi-value">{fmtMoney(total)}</div></div><div className="kpi-card"><div className="kpi-label">Anticipos logrados</div><div className="kpi-value">{advances.length}</div><small>{fmtMoney(advanceAmount)} recibidos</small></div><div className="kpi-card"><div className="kpi-label">Venta promedio</div><div className="kpi-value">{fmtMoney(average)}</div></div><div className="kpi-card"><div className="kpi-label">Mejor vendedor</div><div className="kpi-value report-name">{sellerRows[0]?.name || "Sin ventas"}</div></div></div>
+    <div className="section-card"><h3>Rendimiento del periodo</h3>{chartData.length === 0 ? <div className="empty-state">No hay ventas cerradas en el periodo seleccionado.</div> : <div className="sales-chart">{chartData.map(item => <div className="sales-bar-row" key={item.label}><span>{item.label}</span><div className="sales-bar-track"><div className="sales-bar" style={{ width: `${Math.max(3, item.value / maxChart * 100)}%` }} /></div><strong>{fmtMoney(item.value)}</strong></div>)}</div>}</div>
     {currentUser.rol === "Jefe" && <div className="section-card"><h3>Ventas por vendedor</h3><table className="table"><thead><tr><th>Vendedor</th><th>Ventas</th><th>Monto total</th><th>Participación</th></tr></thead><tbody>{sellerRows.map(row => <tr key={row.name}><td>{row.name}</td><td>{row.count}</td><td>{fmtMoney(row.total)}</td><td>{total ? `${(row.total / total * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div>}
-    <div className="section-card"><h3>Detalle de ventas</h3><table className="table"><thead><tr><th>Fecha</th><th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>Total</th></tr></thead><tbody>{accepted.map(quote => <tr key={quote.id}><td>{fmtDate(quote.fechaVenta || quote.fecha)}</td><td>{quote.numero}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{fmtMoney(quote.total)}</td></tr>)}</tbody></table></div>
+    <div className="section-card"><h3>Productos vendidos por producto y categoría</h3><table className="table"><thead><tr><th>Categoría</th><th>Producto</th><th>Unidades</th><th>Monto vendido</th></tr></thead><tbody>{productRows.map(row => <tr key={`${row.category}-${row.product}`}><td>{row.category}</td><td>{row.product}</td><td>{row.quantity}</td><td>{fmtMoney(row.total)}</td></tr>)}</tbody></table></div>
+    <div className="section-card"><h3>Detalle de ventas</h3><table className="table"><thead><tr><th>Fecha</th><th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>Estado</th><th>Total</th></tr></thead><tbody>{sold.map(quote => <tr key={quote.id}><td>{fmtDate(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha)}</td><td>{quote.numero}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{quote.ordenPedido?.estadoPago === "Cancelado" ? "Cancelado" : "Aceptada"}</td><td>{fmtMoney(quote.total)}</td></tr>)}</tbody></table></div>
   </div>;
 }
 
@@ -1463,7 +1581,10 @@ export default function CasaSolarCRM() {
       setLoading(true);
       const profile = await profileFromFirebaseUser(firebaseUser);
       setCurrentUser(profile);
-      if (["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].includes(profile.rol)) setTab("ordenes-tecnicas");
+      if (["Jefe técnico", "Técnico"].includes(profile.rol)) setTab("ordenes-tecnicas");
+      if (profile.rol === "Programación") setTab("programacion");
+      if (profile.rol === "Bodega") setTab("bodega");
+      if (profile.rol === "Facturación") setTab("facturacion");
       const [v, c, q, s, camp] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
@@ -1632,7 +1753,7 @@ export default function CasaSolarCRM() {
         <LoginScreen onLogin={handleLogin} />
       ) : (
         <div className="app-shell">
-          <Sidebar tab={tab} setTab={(t) => { setTab(t); setSelectedId(null); }} currentUser={currentUser} onLogout={handleLogout} />
+          <Sidebar tab={tab} setTab={(t) => { setTab(t); setSelectedId(null); }} currentUser={currentUser} cotizaciones={cotizaciones} onLogout={handleLogout} />
           <main className="main">
             {tab === "dashboard" && (
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
@@ -1658,6 +1779,11 @@ export default function CasaSolarCRM() {
             {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} />}
             {tab === "catalogo" && <CatalogoView />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "descuentos" && <DiscountRequestsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "programacion" && <OperationsView mode="programacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "bodega" && <OperationsView mode="bodega" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "facturacion" && <OperationsView mode="facturacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "planificacion" && <PlanningView cotizaciones={cotizaciones} contactos={contactos} />}
             {tab === "equipo" && currentUser.rol === "Jefe" && (
               <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} />
             )}
@@ -1772,6 +1898,20 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .contact-name { font-weight:500; font-size:14px; }
 .contact-sub { font-size:12px; color:#8A8F98; }
 .contact-date { font-size:12px; white-space:nowrap; }
+.follow-client-row { cursor:default; }
+.follow-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:620px; margin-top:2px; }
+.follow-next { color:#9B1017; margin-top:3px; }
+.follow-open { margin:0; flex-shrink:0; }
+.follow-thread-modal { max-width:680px; }
+.follow-thread { padding-top:22px; }
+.follow-message { display:grid; grid-template-columns:32px 1fr; gap:10px; position:relative; padding-bottom:16px; }
+.follow-dot { width:30px; height:30px; border-radius:50%; background:#FBE1E1; color:#9B1017; display:flex; align-items:center; justify-content:center; z-index:1; }
+.follow-line { position:absolute; left:14px; top:29px; bottom:-1px; width:2px; background:#F1C5C5; }
+.follow-bubble { background:#F7F5F0; border:1px solid #E4E0D8; border-radius:10px; padding:11px 13px; }
+.follow-meta { display:flex; justify-content:space-between; gap:10px; font-size:12px; }
+.follow-meta span { color:#8A8F98; }
+.follow-bubble p { margin:7px 0; font-size:13px; white-space:pre-wrap; }
+.follow-bubble small { display:flex; align-items:center; gap:5px; color:#9B1017; }
 
 .empty-state { text-align:center; padding:40px 20px; color:#8A8F98; font-size:13.5px; background:#fff; border:1px dashed #E4E0D8; border-radius:12px; }
 
@@ -1807,11 +1947,16 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .total-line { text-align:right; font-size:15px; padding:8px 0; font-family:'IBM Plex Mono',monospace; }
 .quote-item-grid { display:grid; grid-template-columns: 1.2fr 1.2fr 1fr 70px 110px 110px auto; align-items:start; }
 .quote-item-grid .input, .quote-item-grid .btn-ghost { width:100%; margin-bottom:8px; }
+.quote-category-row { display:flex; align-items:center; gap:12px; margin:-3px 0 12px; }
+.quote-category-row label { width:240px; flex-shrink:0; }
+.quote-category-row .input { margin-bottom:0; }
+.quote-category-row p { font-size:11px; }
 .quote-actions { display:flex; align-items:center; gap:5px; flex-wrap:wrap; min-width:270px; }
 .quote-actions .btn-ghost.small { margin-bottom:0; padding:5px 7px; }
 .send-count { font-size:10.5px; color:#667085; border-bottom:1px dotted #667085; cursor:help; }
 .change-user-btn { color:#fff !important; border-color:rgba(255,255,255,0.32) !important; }
 .change-user-btn:hover { color:#fff !important; background:rgba(255,255,255,0.08); }
+.nav-item.nav-alert { color:#fff; background:#7A1D24; box-shadow:inset 3px 0 #FFCB45; }
 .discount-btn { border-color:#E30613; color:#9B1017; }
 .discount-status { font-size:10px; font-weight:600; padding:4px 7px; border-radius:12px; }
 .discount-status.pendiente { background:#FFF2CC; color:#7A4D00; }
@@ -1851,6 +1996,14 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .technical-order-row span, .technical-order-row small { color:#667085; font-size:11.5px; }
 .photo-links { display:flex; flex-wrap:wrap; gap:7px; margin:-3px 0 14px; }
 .photo-links a { display:inline-flex; align-items:center; gap:5px; color:#9B1017; background:#FFF0F1; border:1px solid #F7C7CA; border-radius:7px; padding:7px 9px; font-size:11px; text-decoration:none; }
+.paid-order-banner { display:flex; align-items:center; gap:8px; color:#166534; background:#DCFCE7; border:1px solid #86EFAC; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-weight:700; }
+.planning-filters { display:flex; align-items:center; gap:16px; }
+.planning-filters .role-toggle { margin:0; min-width:260px; }
+.planning-filters .input { margin:0; max-width:220px; }
+.timeline-list { display:flex; flex-direction:column; gap:10px; }
+.timeline-item { display:grid; grid-template-columns:100px 1fr; gap:14px; align-items:center; border-left:4px solid #E30613; background:#F7F5F0; border-radius:8px; padding:12px 14px; }
+.timeline-item > strong { color:#9B1017; font-family:'IBM Plex Mono',monospace; }
+.timeline-item h3 { font-size:14px; }
 .report-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .report-filters { display:flex; align-items:end; gap:10px; flex-wrap:wrap; }
 .report-filters label { min-width:155px; flex:1; }
@@ -1908,12 +2061,16 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .kpi-grid { grid-template-columns: repeat(2,1fr); }
   .row-2 { grid-template-columns: 1fr; }
   .quote-item-grid { grid-template-columns:1fr 1fr; }
+  .quote-category-row { align-items:stretch; flex-direction:column; }
+  .quote-category-row label { width:100%; }
   .form-grid { grid-template-columns:1fr; }
   .client-preview { grid-template-columns:1fr; }
   .client-preview .full { grid-column:auto; }
   .route-layout { grid-template-columns:1fr; }
   .route-address-grid { grid-template-columns:1fr; }
   .pending-transport-card { align-items:stretch; flex-direction:column; }
+  .planning-filters { align-items:stretch; flex-direction:column; }
+  .planning-filters .role-toggle, .planning-filters .input { min-width:0; max-width:none; width:100%; }
   .discount-summary { grid-template-columns:1fr; }
   .user-access-grid { grid-template-columns:1fr; }
   .user-access-grid label:last-child { grid-column:auto; }
