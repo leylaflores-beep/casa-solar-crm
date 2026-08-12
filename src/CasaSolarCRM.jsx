@@ -771,6 +771,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   const draftKey = `casasolar:draft:orden:${cotizacion.id || cotizacion.numero}`;
   const defaultForm = {
     tipoOrden: "Calentadores",
+    tipoEvaluacion: "Visita por llamada", fechaVisitaTecnica: "",
     fechaInstalacion: "", horario: "Mañana", direccion: contacto?.direccion || "",
     departamento: contacto?.departamento || "", telefono: contacto?.telefono || "",
     nit: contacto?.nit || "", niveles: "1", materialTecho: "Lámina", tipoTecho: "",
@@ -787,6 +788,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     motivoRevision: "", diagnosticoPreliminar: "", medicionesTecnicas: "", accesoTecho: "Sí", riesgosDetectados: "",
     areaIluminar: "", alturaInstalacionLuz: "", cantidadLuminarias: "", potenciaLuminaria: "", ubicacionPanelSolar: "", horasIluminacion: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
+    estadoInstalacion: "Pendiente de programación", estadoBodega: "Pendiente",
     ...(cotizacion.ordenPedido || {}),
   };
   const [form, setForm] = useState(() => {
@@ -830,10 +832,16 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
             </div>
             <div className="quoted-equipment"><span>Equipo cotizado</span>{(cotizacion.items || []).map(item => <div key={item.id || `${item.productoId}-${item.descripcion}`}><strong>{item.cantidad || 1} × {nombreItem(item)}</strong>{item.tamano && <small>{item.tamano}</small>}</div>)}</div>
           </div>
-          <h4>Asignación de visita física</h4>
+          <h4>Tipo de evaluación técnica</h4>
+          <div className="evaluation-type-buttons">
+            {["Visita por llamada", "Visita por videollamada", "Visita presencial"].map(option => <button type="button" key={option} className={form.tipoEvaluacion === option ? "active" : ""} onClick={() => set("tipoEvaluacion", option)}>{form.tipoEvaluacion === option && <CheckCircle2 size={15} />}{option}</button>)}
+          </div>
+          <div className="evaluation-route-note"><Send size={15} /><span>{form.tipoEvaluacion === "Visita presencial" ? "Se enviará al Jefe técnico para asignar y programar al técnico." : "Se enviará directamente a Programación para coordinar la llamada con el cliente."}</span></div>
+          <h4>{form.tipoEvaluacion === "Visita presencial" ? "Asignación de visita presencial" : "Responsable y programación"}</h4>
           <div className="form-grid">
             {field("Departamento de la visita", "departamentoVisita")}
             <div><label className="field-label">Técnico asignado</label><select className="input" disabled={!canAssignTechnician} value={form.tecnicoAsignadoEmail} onChange={e => { const tech = technicians.find(item => item.email === e.target.value); setForm(prev => ({ ...prev, tecnicoAsignadoEmail: e.target.value, tecnicoAsignadoNombre: tech?.nombre || "" })); }}><option value="">Sin asignar</option>{technicians.map(tech => <option key={tech.id || tech.email} value={tech.email}>{tech.nombre}{tech.departamentosCobertura ? ` · ${tech.departamentosCobertura}` : ""}</option>)}</select></div>
+            {field(form.tipoEvaluacion === "Visita presencial" ? "Fecha de visita técnica" : "Fecha de llamada o videollamada", "fechaVisitaTecnica", "date")}
           </div>
           <h4>Programación e instalación</h4>
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
@@ -844,6 +852,12 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           {form.tipoOrden === "Iluminación" && <div className="form-grid">{field("Área a iluminar (m²)", "areaIluminar", "number")}{field("Altura de instalación", "alturaInstalacionLuz")}{field("Cantidad de luminarias", "cantidadLuminarias", "number")}{field("Potencia de luminaria (W)", "potenciaLuminaria", "number")}{field("Ubicación del panel solar", "ubicacionPanelSolar")}{field("Horas de iluminación requeridas", "horasIluminacion")}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
           <h4>{isTechnicalArea ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
           {!isTechnicalArea && <><div className="form-grid">{select("Estado del pago", "estadoPago", ["Pendiente", "Abonado", "Cancelado"])}{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div>{form.estadoPago === "Cancelado" && <div className="paid-order-banner"><CheckCircle2 size={18} /> CANCELADO · Cliente pagó el total</div>}<div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
+          <h4>Estado de la orden</h4>
+          <div className="form-grid order-status-grid">
+            <div><label className="field-label">Pago del cliente</label><div className={`order-status-box ${form.estadoPago === "Cancelado" ? "done" : ""}`}>{form.estadoPago === "Cancelado" ? "Cancelado (pagado)" : form.estadoPago || "Pendiente"}</div></div>
+            <div><label className="field-label">Estado de instalación</label><select className="input" disabled={!['Jefe', 'Jefe técnico', 'Programación'].includes(currentUser?.rol)} value={form.estadoInstalacion || "Pendiente de programación"} onChange={e => set("estadoInstalacion", e.target.value)}><option>Pendiente de programación</option><option>Programada para instalación</option><option>Instalada</option><option>Cancelada</option></select></div>
+            <div><label className="field-label">Estado de Bodega</label><select className="input" disabled={!['Jefe', 'Bodega'].includes(currentUser?.rol)} value={form.estadoBodega || "Pendiente"} onChange={e => set("estadoBodega", e.target.value)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></div>
+          </div>
           <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
           <label className="field-label">Evidencias fotográficas (enlaces de Google Drive)</label>
           <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
@@ -971,8 +985,11 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
       {showOrder && <OrderFormModal cotizacion={{ ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida }} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onClose={() => setShowOrder(false)} onSave={(form) => {
           const quoteForOrder = { ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida };
           const assigned = Boolean(form.tecnicoAsignadoEmail);
-          const history = [...(quoteForOrder.ordenFlujo?.historial || []), { accion: "Orden guardada", usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
-          onUpdate({ ...quoteForOrder, ordenPedido: form, ordenFlujo: { ...(quoteForOrder.ordenFlujo || {}), etapa: assigned ? "Técnico" : "Pendiente de asignación", historial: history } });
+          const presencial = form.tipoEvaluacion === "Visita presencial";
+          const nextStage = presencial ? (assigned ? "Técnico" : "Jefe técnico") : "Programación";
+          const action = presencial ? (assigned ? `Visita presencial asignada a ${form.tecnicoAsignadoNombre}` : "Visita presencial enviada al Jefe técnico") : `${form.tipoEvaluacion} enviada a Programación`;
+          const history = [...(quoteForOrder.ordenFlujo?.historial || []), { accion: action, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+          onUpdate({ ...quoteForOrder, ordenPedido: form, ordenFlujo: { ...(quoteForOrder.ordenFlujo || {}), etapa: nextStage, historial: history } });
           setShowOrder(false);
         }} onGenerate={(form) => {
         try {
@@ -1458,8 +1475,14 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
     return null;
   };
   const saveRecord = (quote, form) => {
-    const history = [...(quote.ordenFlujo?.historial || []), { accion: "Registro actualizado", usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: new Date().toISOString() }];
-    onUpdate({ ...quote, ordenPedido: form, ordenFlujo: { ...(quote.ordenFlujo || {}), historial: history } });
+    const presencial = form.tipoEvaluacion === "Visita presencial";
+    let stage = quote.ordenFlujo?.etapa || (presencial ? "Jefe técnico" : "Programación");
+    if (role === "Jefe técnico") stage = presencial ? (form.tecnicoAsignadoEmail ? "Técnico" : "Jefe técnico") : "Programación";
+    const detail = role === "Jefe técnico" && presencial
+      ? (form.tecnicoAsignadoEmail ? `Jefe técnico asignó visita a ${form.tecnicoAsignadoNombre}` : "Jefe técnico dejó la visita sin técnico asignado")
+      : "Registro actualizado";
+    const history = [...(quote.ordenFlujo?.historial || []), { accion: detail, usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: new Date().toISOString() }];
+    onUpdate({ ...quote, ordenPedido: form, ordenFlujo: { ...(quote.ordenFlujo || {}), etapa: stage, historial: history } });
     setSelected(null);
   };
   const advance = (quote, form, config) => {
@@ -1470,13 +1493,13 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
     setSelected(null);
   };
   return <div>
-    <div className="page-head"><h2>Órdenes técnicas</h2><p>Visitas físicas y traslado de información entre Técnico, Programación, Bodega y Facturación.</p></div>
+    <div className="page-head"><h2>Órdenes técnicas</h2><p>Llamadas, videollamadas, visitas presenciales y traslado de información entre las áreas.</p></div>
     <div className="section-card">
       {visible.length === 0 ? <div className="empty-state">No tienes órdenes asignadas en esta etapa.</div> : <div className="mini-list">{visible.map(quote => {
         const contact = contactos.find(item => item.id === quote.contactoId);
         return <button className="technical-order-row" key={quote.id} onClick={() => setSelected(quote.id)}>
-          <div><strong>{quote.ordenNumero || quote.numero.replace("CS-", "OP-")}</strong><span>{contact?.nombre || quote.contactoNombre} · {quote.ordenPedido.departamentoVisita || contact?.departamento || "Sin departamento"}</span></div>
-          <div><span className="badge badge-blue">{quote.ordenFlujo?.etapa || "Pendiente"}</span><small>{quote.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"}</small></div>
+          <div><strong>{quote.ordenNumero || quote.numero.replace("CS-", "OP-")}</strong><span>{contact?.nombre || quote.contactoNombre} · {quote.ordenPedido.tipoEvaluacion || "Evaluación por definir"} · {quote.ordenPedido.departamentoVisita || contact?.departamento || "Sin departamento"}</span></div>
+          <div><span className="badge badge-blue">{quote.ordenFlujo?.etapa || "Pendiente"}</span><small>{quote.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"} · {quote.ordenPedido.estadoPago === "Cancelado" ? "Pago cancelado" : quote.ordenPedido.estadoInstalacion || "Sin programar"} · {quote.ordenPedido.estadoBodega || "Bodega pendiente"}</small></div>
         </button>;
       })}</div>}
     </div>
@@ -1557,7 +1580,12 @@ function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUse
 }
 
 function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }) {
-  const orders = cotizaciones.filter(quote => quote.ordenPedido);
+  const allOrders = cotizaciones.filter(quote => quote.ordenPedido);
+  const orders = mode === "programacion"
+    ? allOrders.filter(quote => ["Programación", "Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa))
+    : mode === "bodega"
+      ? allOrders.filter(quote => ["Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa))
+      : allOrders.filter(quote => ["Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa));
   const updateOrder = (quote, fields, action) => {
     const history = [...(quote.ordenFlujo?.historial || []), { accion: action, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
     onUpdate({ ...quote, ordenPedido: { ...quote.ordenPedido, ...fields }, ordenFlujo: { ...(quote.ordenFlujo || {}), historial: history } });
@@ -1566,7 +1594,7 @@ function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }
   if (mode === "programacion") {
     const scheduled = orders.filter(q => q.ordenPedido.fechaInstalacion).sort((a,b) => a.ordenPedido.fechaInstalacion.localeCompare(b.ordenPedido.fechaInstalacion));
     const pending = orders.filter(q => !q.ordenPedido.fechaInstalacion);
-    const rows = list => list.map(q => <tr key={q.id}><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{contactName(q)}</td><td>{q.ordenPedido.tipoOrden}</td><td><input className="input compact" type="date" value={q.ordenPedido.fechaInstalacion || ""} onChange={e => updateOrder(q,{fechaInstalacion:e.target.value},"Fecha programada actualizada")} /></td><td><select className="input compact" value={q.ordenPedido.horario || "Por confirmar"} onChange={e => updateOrder(q,{horario:e.target.value},"Horario actualizado")}><option>Mañana</option><option>Tarde</option><option>Por confirmar</option></select></td><td>{q.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"}</td></tr>);
+    const rows = list => list.map(q => <tr key={q.id}><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{contactName(q)}</td><td>{q.ordenPedido.tipoEvaluacion || q.ordenPedido.tipoOrden}</td><td><input className="input compact" type="date" value={q.ordenPedido.fechaInstalacion || ""} onChange={e => updateOrder(q,{fechaInstalacion:e.target.value, estadoInstalacion:e.target.value ? "Programada para instalación" : "Pendiente de programación"},"Fecha programada actualizada")} /></td><td><select className="input compact" value={q.ordenPedido.horario || "Por confirmar"} onChange={e => updateOrder(q,{horario:e.target.value},"Horario actualizado")}><option>Mañana</option><option>Tarde</option><option>Por confirmar</option></select></td><td>{q.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"}</td></tr>);
     return <div><div className="page-head"><h2>Programación</h2><p>Órdenes organizadas por fecha programada.</p></div><div className="section-card"><h3>Pendientes sin fecha ({pending.length})</h3>{pending.length ? <table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(pending)}</tbody></table> : <div className="empty-state">No hay órdenes pendientes.</div>}</div><div className="section-card"><h3>Órdenes programadas</h3><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(scheduled)}</tbody></table></div></div>;
   }
   if (mode === "bodega") return <div><div className="page-head"><h2>Bodega</h2><p>Equipos que deben prepararse y despacharse.</p></div><div className="section-card"><table className="table"><thead><tr><th>Fecha</th><th>Orden</th><th>Vendedor</th><th>Equipos</th><th>Estado de despacho</th></tr></thead><tbody>{orders.sort((a,b)=>(a.ordenPedido.fechaInstalacion||"9999").localeCompare(b.ordenPedido.fechaInstalacion||"9999")).map(q => <tr key={q.id}><td>{q.ordenPedido.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : "Pendiente"}</td><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{q.vendedor}</td><td>{q.items.filter(i=>i.productoId!=="transporte_ruta").map(i=>`${i.cantidad} × ${nombreItem(i)}`).join(", ")}</td><td><select className="input compact" value={q.ordenPedido.estadoBodega || "Pendiente"} onChange={e=>updateOrder(q,{estadoBodega:e.target.value},`Bodega: ${e.target.value}`)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></td></tr>)}</tbody></table></div></div>;
@@ -2127,6 +2155,12 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .photo-links { display:flex; flex-wrap:wrap; gap:7px; margin:-3px 0 14px; }
 .photo-links a { display:inline-flex; align-items:center; gap:5px; color:#9B1017; background:#FFF0F1; border:1px solid #F7C7CA; border-radius:7px; padding:7px 9px; font-size:11px; text-decoration:none; }
 .paid-order-banner { display:flex; align-items:center; gap:8px; color:#166534; background:#DCFCE7; border:1px solid #86EFAC; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-weight:700; }
+.evaluation-type-buttons { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.evaluation-type-buttons button { border:1px solid #D9D5CC; background:#fff; color:#344054; border-radius:9px; padding:10px; font:600 12px inherit; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
+.evaluation-type-buttons button.active { border-color:#E30613; background:#FBE1E1; color:#9B1017; }
+.evaluation-route-note { display:flex; align-items:center; gap:8px; background:#EEF4FF; color:#344054; border-radius:8px; padding:9px 11px; margin-bottom:15px; font-size:12px; }
+.order-status-box { background:#F7F5F0; border:1px solid #E4E0D8; border-radius:8px; padding:9px 10px; min-height:38px; font-size:13px; }
+.order-status-box.done { background:#DCFCE7; border-color:#86EFAC; color:#166534; font-weight:700; }
 .planning-filters { display:flex; align-items:center; gap:16px; }
 .planning-filters .role-toggle { margin:0; min-width:260px; }
 .planning-filters .input { margin:0; max-width:220px; }
@@ -2205,6 +2239,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .user-access-grid { grid-template-columns:1fr; }
   .user-access-grid label:last-child { grid-column:auto; }
   .order-summary-grid { grid-template-columns:1fr; }
+  .evaluation-type-buttons { grid-template-columns:1fr; }
   .report-head { align-items:flex-start; flex-direction:column; }
   .sales-bar-row { grid-template-columns:52px minmax(80px,1fr) 90px; }
 }
