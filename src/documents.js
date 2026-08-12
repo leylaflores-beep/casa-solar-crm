@@ -125,7 +125,8 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   const client = contact || quote.cliente || {};
   const black = [20, 20, 20];
   doc.addImage(logo, "PNG", 12, 10, 52, 9);
-  doc.setTextColor(...black); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text("O R D E N  D E  P E D I D O", 108, 21, { align: "center" });
+  const orderTitles = { Servicios: "ORDEN DE SERVICIO", "Revisión técnica": "ORDEN DE REVISIÓN TÉCNICA", Iluminación: "ORDEN DE ILUMINACIÓN", Calentadores: "ORDEN DE PEDIDO" };
+  doc.setTextColor(...black); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text(orderTitles[order.tipoOrden] || "ORDEN DE PEDIDO", 108, 21, { align: "center" });
   doc.setFontSize(7); doc.text("CORPORACIÓN THERMAL S. A.  |  Plaza Pericentro zona 8, Quetzaltenango  |  PBX 7767 5949", 12, 31);
   doc.setDrawColor(...black); doc.setLineWidth(0.6); doc.line(12, 36, 204, 36);
   const orderNumber = quote.ordenNumero || quote.numero.replace("CS-", "OP-");
@@ -180,7 +181,25 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   lineField("NIT", order.nit || client.nit, 111, 155, 90);
 
   section(108, 164, 96, "DATOS TÉCNICOS");
-  const technical = [
+  const technicalByType = {
+    Servicios: [
+      `Tipo de servicio: ${order.tipoServicio || "Sin indicar"}`, `Equipo existente: ${order.equipoExistente || "Sin indicar"}`,
+      `Falla reportada: ${order.fallaReportada || "Sin indicar"}`, `Servicio requerido: ${order.servicioRequerido || "Sin indicar"}`,
+      `Materiales/repuestos: ${order.materialesServicio || "Sin indicar"}`, `¿Entra camión?: ${order.entraCamion || "Sin indicar"}`,
+    ],
+    "Revisión técnica": [
+      `Motivo: ${order.motivoRevision || "Sin indicar"}`, `Equipo/sistema: ${order.equipoExistente || "Sin indicar"}`,
+      `Diagnóstico preliminar: ${order.diagnosticoPreliminar || "Sin indicar"}`, `Mediciones: ${order.medicionesTecnicas || "Sin indicar"}`,
+      `Acceso al techo: ${order.accesoTecho || "Sin indicar"}`, `Riesgos: ${order.riesgosDetectados || "Sin indicar"}`,
+    ],
+    Iluminación: [
+      `Área a iluminar: ${order.areaIluminar || "-"} m²`, `Altura de instalación: ${order.alturaInstalacionLuz || "Sin indicar"}`,
+      `Cantidad de luminarias: ${order.cantidadLuminarias || "-"}`, `Potencia: ${order.potenciaLuminaria || "-"} W`,
+      `Ubicación del panel: ${order.ubicacionPanelSolar || "Sin indicar"}`, `Horas requeridas: ${order.horasIluminacion || "Sin indicar"}`,
+      `Material del techo: ${order.materialTecho || "Sin indicar"}`, `¿Entra camión?: ${order.entraCamion || "Sin indicar"}`,
+    ],
+  };
+  const heaterTechnical = [
     `Niveles de la casa: ${order.niveles || "Sin indicar"}`,
     `Material del techo: ${order.materialTecho || "Sin indicar"}`,
     `Tipo de techo: ${order.tipoTecho || "Sin indicar"}`,
@@ -197,6 +216,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
     `Gradas al último nivel: ${order.gradas || "Sin indicar"}`,
     `¿Entra camión a la casa?: ${order.entraCamion || "Sin indicar"}`,
   ];
+  const technical = technicalByType[order.tipoOrden] || heaterTechnical;
   doc.setFont("helvetica", "normal"); doc.setFontSize(5.7);
   let technicalY = 173;
   technical.forEach(text => {

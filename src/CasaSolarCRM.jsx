@@ -66,6 +66,7 @@ const CATALOGO = [
   { id: "visita_revision", nombre: "Visita técnica de revisión", categoria: "Visita" },
   { id: "visita_correctiva", nombre: "Visita técnica correctiva", categoria: "Visita" },
   { id: "accesorios", nombre: "Accesorios", categoria: "Producto" },
+  { id: "kit", nombre: "Kit", categoria: "Producto" },
   { id: "estructura_nivelacion", nombre: "Estructura de nivelación", categoria: "Estructura" },
   { id: "estructura_elevacion", nombre: "Estructura de elevación", categoria: "Estructura" },
   { id: "estructura_deposito", nombre: "Estructura para depósito de agua", categoria: "Estructura" },
@@ -73,6 +74,7 @@ const CATALOGO = [
 
 const CANALES = [
   { id: "Llamada entrante", icon: Phone },
+  { id: "Sala de ventas", icon: ShoppingCart },
   { id: "Facebook", icon: ThumbsUp },
   { id: "Instagram", icon: Camera },
   { id: "WhatsApp", icon: MessageCircle },
@@ -745,6 +747,7 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
 function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], onClose, onSave, onGenerate, onAdvance, advanceLabel }) {
   const draftKey = `casasolar:draft:orden:${cotizacion.id || cotizacion.numero}`;
   const defaultForm = {
+    tipoOrden: "Calentadores",
     fechaInstalacion: "", horario: "Mañana", direccion: contacto?.direccion || "",
     departamento: contacto?.departamento || "", telefono: contacto?.telefono || "",
     nit: contacto?.nit || "", niveles: "1", materialTecho: "Lámina", tipoTecho: "",
@@ -757,6 +760,9 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
     garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
     evidenciasFotograficas: "",
+    tipoServicio: "Mantenimiento", equipoExistente: "", fallaReportada: "", servicioRequerido: "", materialesServicio: "",
+    motivoRevision: "", diagnosticoPreliminar: "", medicionesTecnicas: "", accesoTecho: "Sí", riesgosDetectados: "",
+    areaIluminar: "", alturaInstalacionLuz: "", cantidadLuminarias: "", potenciaLuminaria: "", ubicacionPanelSolar: "", horasIluminacion: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
     ...(cotizacion.ordenPedido || {}),
   };
@@ -785,6 +791,8 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-head"><div><h3>Orden de pedido {cotizacion.ordenNumero || ""}</h3><small>Basada en {cotizacion.numero} · {contacto?.nombre}</small><small className="draft-note">Borrador guardado automáticamente</small></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>
         <div className="modal-body">
+          <label className="field-label">Tipo de orden de pedido</label>
+          <select className="input order-type-select" value={form.tipoOrden || "Calentadores"} onChange={e => set("tipoOrden", e.target.value)}><option>Calentadores</option><option>Servicios</option><option>Revisión técnica</option><option>Iluminación</option></select>
           <div className="order-evaluation-summary">
             <div className="order-summary-head"><ClipboardList size={18} /><div><h4>Información para evaluación técnica</h4><p>Datos tomados automáticamente de la cotización.</p></div></div>
             <div className="order-summary-grid">
@@ -802,8 +810,11 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           </div>
           <h4>Programación e instalación</h4>
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
-          <h4>Datos técnicos</h4>
-          <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>
+          <h4>Datos técnicos · {form.tipoOrden || "Calentadores"}</h4>
+          {(form.tipoOrden || "Calentadores") === "Calentadores" && <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>}
+          {form.tipoOrden === "Servicios" && <div className="form-grid">{select("Tipo de servicio", "tipoServicio", ["Mantenimiento", "Reparación", "Instalación", "Desinstalación", "Otro"])}{field("Equipo existente", "equipoExistente")}{field("Falla reportada", "fallaReportada")}{field("Servicio requerido", "servicioRequerido")}{field("Materiales o repuestos previstos", "materialesServicio")}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
+          {form.tipoOrden === "Revisión técnica" && <div className="form-grid">{field("Motivo de la revisión", "motivoRevision")}{field("Equipo o sistema a revisar", "equipoExistente")}{field("Diagnóstico preliminar", "diagnosticoPreliminar")}{field("Mediciones necesarias", "medicionesTecnicas")}{select("Acceso al techo", "accesoTecho", ["Sí", "No", "Por confirmar"])}{field("Riesgos o condiciones especiales", "riesgosDetectados")}</div>}
+          {form.tipoOrden === "Iluminación" && <div className="form-grid">{field("Área a iluminar (m²)", "areaIluminar", "number")}{field("Altura de instalación", "alturaInstalacionLuz")}{field("Cantidad de luminarias", "cantidadLuminarias", "number")}{field("Potencia de luminaria (W)", "potenciaLuminaria", "number")}{field("Ubicación del panel solar", "ubicacionPanelSolar")}{field("Horas de iluminación requeridas", "horasIluminacion")}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
           <h4>{isTechnicalArea ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
           {!isTechnicalArea && <><div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div><div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
           <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
