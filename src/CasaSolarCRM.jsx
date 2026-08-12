@@ -1485,7 +1485,7 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
 }
 
 function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUser, onUpdate }) {
-  const [selected, setSelected] = useState(null);
+  const [processingId, setProcessingId] = useState("");
   const pendingMap = new Map();
   solicitudes.filter(request => request.estado === "Pendiente").forEach(request => pendingMap.set(request.id, request));
   cotizaciones.forEach(quote => {
@@ -1502,12 +1502,57 @@ function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUse
     });
   });
   const pending = [...pendingMap.values()].sort((a, b) => String(b.solicitadoEn || "").localeCompare(String(a.solicitadoEn || "")));
-  const selectedRequest = pending.find(request => request.id === selected);
-  const quote = selectedRequest ? cotizaciones.find(item => item.id === selectedRequest.cotizacionId) : null;
+  const currentEmail = String(currentUser.email || "").toLowerCase();
+  const canLigia = currentEmail === "ligiaeugeniamolina@gmail.com";
+  const canLeyla = currentEmail === "leyla.flores@gmail.com";
+  const resolve = async (request, decision) => {
+    const quote = cotizaciones.find(item => item.id === request.cotizacionId)
+      || cotizaciones.find(item => item.descuentoSolicitud?.id === request.id);
+    if (!quote) return window.alert("No se encontró la cotización original. Actualiza la página e inténtalo nuevamente.");
+    if (decision === "Ligia" && !canLigia) return window.alert("Esta autorización debe realizarla Ligia desde su propio usuario.");
+    if (decision === "Leyla" && !canLeyla) return window.alert("Esta autorización debe realizarla Leyla desde su propio usuario.");
+    if (decision === "No autorizado" && !canLigia && !canLeyla) return window.alert("Solo Ligia o Leyla pueden rechazar esta solicitud.");
+    setProcessingId(request.id);
+    const now = new Date().toISOString();
+    const baseTotal = Number(request.totalBase ?? quote.totalOriginal ?? quote.total ?? 0);
+    const discountAmount = Number(request.monto || 0);
+    const authorized = decision !== "No autorizado";
+    const resolvedRequest = authorized ? {
+      ...request,
+      estado: "Autorizado",
+      autorizadoPor: decision === "Ligia" ? "Ligia Eugenia Molina" : "Leyla Flores",
+      autorizadoPorEmail: currentEmail,
+      autorizadoEn: now,
+      totalAnterior: baseTotal,
+      totalFinal: Math.max(0, baseTotal - discountAmount),
+    } : {
+      ...request,
+      estado: "No autorizado",
+      rechazadoPor: currentUser.nombre,
+      rechazadoPorEmail: currentEmail,
+      rechazadoEn: now,
+    };
+    try {
+      await onUpdate({
+        ...quote,
+        totalOriginal: baseTotal,
+        total: authorized ? resolvedRequest.totalFinal : quote.total,
+        descuentoSolicitud: resolvedRequest,
+        descuentoAutorizado: authorized ? resolvedRequest : null,
+        descuentoHistorial: [...(quote.descuentoHistorial || []), { ...resolvedRequest, accion: authorized ? `Autorizado por ${decision}` : "No autorizado" }],
+      });
+      window.alert(authorized
+        ? `Descuento autorizado por ${resolvedRequest.autorizadoPor}. La cotización ${quote.numero} ahora tiene un total de ${fmtMoney(resolvedRequest.totalFinal)}.`
+        : `La solicitud de descuento de la cotización ${quote.numero} fue marcada como no autorizada.`);
+    } catch (error) {
+      console.error("No se pudo resolver la solicitud de descuento:", error);
+      window.alert("No se pudo guardar la decisión. Revisa la conexión e inténtalo nuevamente.");
+    } finally {
+      setProcessingId("");
+    }
+  };
   return <div><div className="page-head"><h2>Descuentos pendientes</h2><p>Solicitudes enviadas por los vendedores para autorización.</p></div>
-    <div className="section-card">{pending.length === 0 ? <div className="empty-state">No hay descuentos pendientes de revisión.</div> : <table className="table"><thead><tr><th>Fecha</th><th>Vendedor</th><th>Cliente</th><th>Cotización</th><th>Descuento</th><th>Motivo</th><th></th></tr></thead><tbody>{pending.map(request => <tr key={request.id}><td>{new Date(request.solicitadoEn).toLocaleDateString("es-GT")}</td><td>{request.solicitadoPor}</td><td>{contactos.find(c => c.id === request.contactoId)?.nombre || request.contactoNombre}</td><td>{request.numero}</td><td>{request.tipo === "Porcentaje" ? `${request.valor}% (${fmtMoney(request.monto)})` : fmtMoney(request.monto)}</td><td>{request.motivo}</td><td><button className="btn-primary" onClick={() => setSelected(request.id)}>Revisar</button></td></tr>)}</tbody></table>}</div>
-    {selectedRequest && !quote && <div className="modal-overlay"><div className="modal"><div className="modal-head"><h3>Cotización no encontrada</h3></div><div className="modal-body"><p>La solicitud existe, pero la cotización original no está disponible. No se puede autorizar hasta recuperarla.</p></div><div className="modal-foot"><button className="btn-primary" onClick={() => setSelected(null)}>Cerrar</button></div></div></div>}
-    {quote && <DiscountAuthorizationModal mode="authorize" cotizacion={{ ...quote, descuentoSolicitud: selectedRequest }} currentUser={currentUser} onClose={() => setSelected(null)} onUpdate={async updated => { const result = await onUpdate(updated); setSelected(null); return result; }} />}
+    <div className="section-card">{pending.length === 0 ? <div className="empty-state">No hay descuentos pendientes de revisión.</div> : <table className="table discount-requests-table"><thead><tr><th>Fecha</th><th>Vendedor</th><th>Cliente</th><th>Cotización</th><th>Descuento</th><th>Motivo</th><th>Decisión</th></tr></thead><tbody>{pending.map(request => <tr key={request.id}><td>{new Date(request.solicitadoEn).toLocaleDateString("es-GT")}</td><td>{request.solicitadoPor}</td><td>{contactos.find(c => c.id === request.contactoId)?.nombre || request.contactoNombre}</td><td>{request.numero}</td><td>{request.tipo === "Porcentaje" ? `${request.valor}% (${fmtMoney(request.monto)})` : fmtMoney(request.monto)}</td><td>{request.motivo}</td><td><div className="discount-decision-buttons"><button className="btn-primary small" disabled={!canLigia || processingId === request.id} onClick={() => resolve(request, "Ligia")}><ShieldCheck size={13}/> Autorizado por Ligia</button><button className="btn-primary small" disabled={!canLeyla || processingId === request.id} onClick={() => resolve(request, "Leyla")}><ShieldCheck size={13}/> Autorizado por Leyla</button><button className="btn-ghost small reject-discount" disabled={processingId === request.id} onClick={() => resolve(request, "No autorizado")}><X size={13}/> No autorizado</button></div></td></tr>)}</tbody></table>}</div>
   </div>;
 }
 
@@ -2042,6 +2087,11 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .discount-status.pendiente { background:#FFF2CC; color:#7A4D00; }
 .discount-status.autorizado { background:#EAF3DE; color:#27500A; }
 .discount-status.rechazado { background:#FCEBEB; color:#791F1F; }
+.discount-status.no.autorizado { background:#FCEBEB; color:#791F1F; }
+.discount-decision-buttons { display:flex; flex-direction:column; align-items:stretch; gap:5px; min-width:165px; }
+.discount-decision-buttons .small { justify-content:center; margin:0; white-space:nowrap; padding:6px 8px; }
+.discount-decision-buttons .reject-discount { color:#791F1F; border-color:#E7B6B6; }
+.discount-requests-table td { vertical-align:top; }
 .discount-modal { max-width:540px; }
 .pending-discount { display:flex; align-items:center; gap:8px; background:#FFF7DD; color:#6E4E00; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; }
 .discount-summary { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:8px 0 14px; }
