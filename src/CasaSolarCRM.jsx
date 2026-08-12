@@ -192,7 +192,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function Sidebar({ tab, setTab, currentUser, cotizaciones = [], onLogout }) {
+function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicitudes = [], onLogout }) {
   const operationalRole = ["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].includes(currentUser.rol);
   const items = operationalRole ? [] : [
     { id: "dashboard", label: "Panel", icon: LayoutDashboard },
@@ -205,7 +205,7 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], onLogout }) {
     { id: "catalogo", label: "Catálogo", icon: Package },
   ];
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
-  const pendingDiscounts = cotizaciones.filter(q => q.descuentoSolicitud?.estado === "Pendiente").length;
+  const pendingDiscounts = descuentoSolicitudes.filter(request => request.estado === "Pendiente").length;
   const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
   if (canReviewDiscounts) items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
   if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
@@ -854,9 +854,9 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   );
 }
 
-function DiscountAuthorizationModal({ cotizacion, currentUser, onClose, onUpdate }) {
+function DiscountAuthorizationModal({ cotizacion, currentUser, mode = "request", onClose, onUpdate }) {
   const pending = cotizacion.descuentoSolicitud?.estado === "Pendiente" ? cotizacion.descuentoSolicitud : null;
-  const canAuthorize = Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
+  const canAuthorize = mode === "authorize" && Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
   const [type, setType] = useState(pending?.tipo || "Porcentaje");
   const [value, setValue] = useState(String(pending?.valor || ""));
   const [reason, setReason] = useState(pending?.motivo || "");
@@ -922,7 +922,6 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
   const [showOrder, setShowOrder] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
-  const canAuthorizeDiscount = Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
   const discountState = cotizacion.descuentoSolicitud?.estado || "";
   const logAction = (canal, destinatario) => {
     const registro = {
@@ -960,9 +959,8 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
       <button className="btn-ghost small" onClick={sendWhatsApp} title="Abrir WhatsApp y registrar el envío"><Send size={14} /> WhatsApp</button>
       <button className="btn-ghost small" onClick={sendEmail} title="Abrir correo y registrar el envío"><Mail size={14} /> Correo</button>
       <button className="btn-ghost small" onClick={() => setShowOrder(true)} title="Llenar y generar orden de pedido"><ShoppingCart size={14} /> Orden</button>
-      {!canAuthorizeDiscount && discountState !== "Pendiente" && discountState !== "Autorizado" && <button className="btn-ghost small discount-btn" onClick={() => setShowDiscount(true)} title="Enviar una solicitud de descuento a Leyla y Ligia"><BadgePercent size={14} /> Solicitar descuento</button>}
-      {!canAuthorizeDiscount && discountState === "Pendiente" && <button className="btn-ghost small discount-btn" disabled title="Esperando autorización de Leyla o Ligia"><Clock size={14} /> Solicitud pendiente</button>}
-      {canAuthorizeDiscount && discountState === "Pendiente" && <button className="btn-primary small discount-btn" onClick={() => setShowDiscount(true)} title="Revisar y autorizar la solicitud del vendedor"><ShieldCheck size={14} /> Autorizar descuento</button>}
+      {discountState !== "Pendiente" && discountState !== "Autorizado" && <button className="btn-ghost small discount-btn" onClick={() => setShowDiscount(true)} title="Enviar una solicitud a la bandeja de descuentos pendientes"><BadgePercent size={14} /> Solicitar descuento</button>}
+      {discountState === "Pendiente" && <button className="btn-ghost small discount-btn" disabled title="Esperando autorización en la bandeja de Leyla o Ligia"><Clock size={14} /> Solicitud pendiente</button>}
       {cotizacion.descuentoSolicitud?.estado && <span className={`discount-status ${cotizacion.descuentoSolicitud.estado.toLowerCase()}`}>{cotizacion.descuentoSolicitud.estado}{cotizacion.descuentoSolicitud.autorizadoPor ? ` · ${cotizacion.descuentoSolicitud.autorizadoPor}` : ""}</span>}
       {(cotizacion.envios || []).length > 0 && (
         <span className="send-count" title={(cotizacion.envios || []).map(e => `${new Date(e.fechaHora).toLocaleString("es-GT")} · ${e.canal} · ${e.usuario}`).join("\n")}>
@@ -1007,7 +1005,7 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
         }
         setShowEdit(false);
       }} />}
-      {showDiscount && <DiscountAuthorizationModal cotizacion={cotizacion} currentUser={currentUser} onClose={() => setShowDiscount(false)} onUpdate={onUpdate} />}
+      {showDiscount && <DiscountAuthorizationModal mode="request" cotizacion={cotizacion} currentUser={currentUser} onClose={() => setShowDiscount(false)} onUpdate={onUpdate} />}
     </div>
   );
 }
@@ -1485,13 +1483,15 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
   </div>;
 }
 
-function DiscountRequestsView({ cotizaciones, contactos, currentUser, onUpdate }) {
+function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUser, onUpdate }) {
   const [selected, setSelected] = useState(null);
-  const pending = cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente");
-  const quote = selected ? cotizaciones.find(item => item.id === selected) : null;
+  const pending = solicitudes.filter(request => request.estado === "Pendiente").sort((a, b) => String(b.solicitadoEn || "").localeCompare(String(a.solicitadoEn || "")));
+  const selectedRequest = pending.find(request => request.id === selected);
+  const quote = selectedRequest ? cotizaciones.find(item => item.id === selectedRequest.cotizacionId) : null;
   return <div><div className="page-head"><h2>Descuentos pendientes</h2><p>Solicitudes enviadas por los vendedores para autorización.</p></div>
-    <div className="section-card">{pending.length === 0 ? <div className="empty-state">No hay descuentos pendientes de revisión.</div> : <table className="table"><thead><tr><th>Fecha</th><th>Vendedor</th><th>Cliente</th><th>Cotización</th><th>Descuento</th><th>Motivo</th><th></th></tr></thead><tbody>{pending.map(item => { const request = item.descuentoSolicitud; return <tr key={item.id}><td>{new Date(request.solicitadoEn).toLocaleDateString("es-GT")}</td><td>{request.solicitadoPor}</td><td>{contactos.find(c => c.id === item.contactoId)?.nombre || item.contactoNombre}</td><td>{item.numero}</td><td>{request.tipo === "Porcentaje" ? `${request.valor}%` : fmtMoney(request.monto)}</td><td>{request.motivo}</td><td><button className="btn-primary" onClick={() => setSelected(item.id)}>Revisar</button></td></tr>; })}</tbody></table>}</div>
-    {quote && <DiscountAuthorizationModal cotizacion={quote} currentUser={currentUser} onClose={() => setSelected(null)} onUpdate={async updated => { const result = await onUpdate(updated); setSelected(null); return result; }} />}
+    <div className="section-card">{pending.length === 0 ? <div className="empty-state">No hay descuentos pendientes de revisión.</div> : <table className="table"><thead><tr><th>Fecha</th><th>Vendedor</th><th>Cliente</th><th>Cotización</th><th>Descuento</th><th>Motivo</th><th></th></tr></thead><tbody>{pending.map(request => <tr key={request.id}><td>{new Date(request.solicitadoEn).toLocaleDateString("es-GT")}</td><td>{request.solicitadoPor}</td><td>{contactos.find(c => c.id === request.contactoId)?.nombre || request.contactoNombre}</td><td>{request.numero}</td><td>{request.tipo === "Porcentaje" ? `${request.valor}% (${fmtMoney(request.monto)})` : fmtMoney(request.monto)}</td><td>{request.motivo}</td><td><button className="btn-primary" onClick={() => setSelected(request.id)}>Revisar</button></td></tr>)}</tbody></table>}</div>
+    {selectedRequest && !quote && <div className="modal-overlay"><div className="modal"><div className="modal-head"><h3>Cotización no encontrada</h3></div><div className="modal-body"><p>La solicitud existe, pero la cotización original no está disponible. No se puede autorizar hasta recuperarla.</p></div><div className="modal-foot"><button className="btn-primary" onClick={() => setSelected(null)}>Cerrar</button></div></div></div>}
+    {quote && <DiscountAuthorizationModal mode="authorize" cotizacion={{ ...quote, descuentoSolicitud: selectedRequest }} currentUser={currentUser} onClose={() => setSelected(null)} onUpdate={async updated => { const result = await onUpdate(updated); setSelected(null); return result; }} />}
   </div>;
 }
 
@@ -1588,6 +1588,7 @@ export default function CasaSolarCRM() {
   const [vendedores, setVendedores] = useState([]);
   const [contactos, setContactos] = useState([]);
   const [cotizaciones, setCotizaciones] = useState([]);
+  const [descuentoSolicitudes, setDescuentoSolicitudes] = useState([]);
   const [seguimientos, setSeguimientos] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [tab, setTab] = useState("dashboard");
@@ -1608,12 +1609,13 @@ export default function CasaSolarCRM() {
       if (profile.rol === "Programación") setTab("programacion");
       if (profile.rol === "Bodega") setTab("bodega");
       if (profile.rol === "Facturación") setTab("facturacion");
-      const [v, c, q, s, camp] = await Promise.all([
+      const [v, c, q, s, camp, discountQueue] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
         storageGet("casasolar:cotizaciones", true),
         storageGet("casasolar:seguimientos", true),
         storageGet("casasolar:campaigns", true),
+        storageGet("casasolar:descuentos", true),
       ]);
       let sellerList = v || [];
       const linkedSeller = sellerList.find(item => item.uid === profile.uid || item.email === profile.email || item.nombre === profile.nombre);
@@ -1637,9 +1639,19 @@ export default function CasaSolarCRM() {
         repairedNumbers = true;
         return { ...item, numero: `CS-${year}-${String(counters[year]).padStart(4, "0")}` };
       });
+      const normalizedDiscounts = Array.isArray(discountQueue) ? [...discountQueue] : [];
+      let repairedDiscounts = false;
+      normalizedQuotes.forEach(quote => {
+        const request = quote.descuentoSolicitud;
+        if (request?.estado === "Pendiente" && !normalizedDiscounts.some(item => item.id === request.id)) {
+          normalizedDiscounts.push({ ...request, cotizacionId: quote.id, numero: quote.numero, contactoId: quote.contactoId, contactoNombre: quote.contactoNombre, vendedor: quote.vendedor, totalBase: quote.totalOriginal ?? quote.total });
+          repairedDiscounts = true;
+        }
+      });
       setVendedores(sellerList);
       setContactos(c || []);
       setCotizaciones(normalizedQuotes);
+      setDescuentoSolicitudes(normalizedDiscounts);
       setSeguimientos(s || []);
       const loadedCampaigns = camp?.length ? camp : [DEFAULT_CAMPAIGN];
       setCampaigns(loadedCampaigns);
@@ -1648,6 +1660,7 @@ export default function CasaSolarCRM() {
         await savePublicCampaign(DEFAULT_CAMPAIGN);
       }
       if (repairedNumbers) await storageSet("casasolar:cotizaciones", normalizedQuotes, true);
+      if (repairedDiscounts) await storageSet("casasolar:descuentos", normalizedDiscounts, true);
       if (!linkedSeller) {
         const updated = [...sellerList, { id: uid(), nombre: profile.nombre, uid: profile.uid, email: profile.email }];
         setVendedores(updated);
@@ -1661,9 +1674,13 @@ export default function CasaSolarCRM() {
 
   useEffect(() => {
     if (!currentUser) return undefined;
-    return subscribeSharedData("casasolar:cotizaciones", value => {
+    const unsubscribeQuotes = subscribeSharedData("casasolar:cotizaciones", value => {
       if (Array.isArray(value)) setCotizaciones(value);
     }, error => console.error("No se pudieron actualizar las solicitudes en tiempo real:", error));
+    const unsubscribeDiscounts = subscribeSharedData("casasolar:descuentos", value => {
+      if (Array.isArray(value)) setDescuentoSolicitudes(value);
+    }, error => console.error("No se pudo actualizar la bandeja de descuentos:", error));
+    return () => { unsubscribeQuotes(); unsubscribeDiscounts(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
@@ -1735,6 +1752,16 @@ export default function CasaSolarCRM() {
     const next = source.map(c => c.id === updated.id ? { ...updated, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta } : c);
     setCotizaciones(next);
     await storageSet("casasolar:cotizaciones", next, true);
+    if (updated.descuentoSolicitud?.id) {
+      const latestQueue = await storageGet("casasolar:descuentos", true);
+      const sourceQueue = Array.isArray(latestQueue) ? latestQueue : descuentoSolicitudes;
+      const queueRecord = { ...updated.descuentoSolicitud, cotizacionId: updated.id, numero: updated.numero, contactoId: updated.contactoId, contactoNombre: updated.contactoNombre, vendedor: updated.vendedor, totalBase: updated.totalOriginal ?? updated.total };
+      const queueNext = sourceQueue.some(item => item.id === queueRecord.id)
+        ? sourceQueue.map(item => item.id === queueRecord.id ? queueRecord : item)
+        : [queueRecord, ...sourceQueue];
+      setDescuentoSolicitudes(queueNext);
+      await storageSet("casasolar:descuentos", queueNext, true);
+    }
     return next.find(c => c.id === updated.id);
   };
   const addSeguimiento = (data) => {
@@ -1790,7 +1817,7 @@ export default function CasaSolarCRM() {
         <LoginScreen onLogin={handleLogin} />
       ) : (
         <div className="app-shell">
-          <Sidebar tab={tab} setTab={(t) => { setTab(t); setSelectedId(null); }} currentUser={currentUser} cotizaciones={cotizaciones} onLogout={handleLogout} />
+          <Sidebar tab={tab} setTab={(t) => { setTab(t); setSelectedId(null); }} currentUser={currentUser} cotizaciones={cotizaciones} descuentoSolicitudes={descuentoSolicitudes} onLogout={handleLogout} />
           <main className="main">
             {tab === "dashboard" && (
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
@@ -1816,7 +1843,7 @@ export default function CasaSolarCRM() {
             {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} />}
             {tab === "catalogo" && <CatalogoView />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
-            {tab === "descuentos" && <DiscountRequestsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "descuentos" && <DiscountRequestsView cotizaciones={cotizaciones} contactos={contactos} solicitudes={descuentoSolicitudes} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "programacion" && <OperationsView mode="programacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "bodega" && <OperationsView mode="bodega" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "facturacion" && <OperationsView mode="facturacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
