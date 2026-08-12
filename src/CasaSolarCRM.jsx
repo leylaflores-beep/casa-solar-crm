@@ -789,6 +789,9 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     areaIluminar: "", alturaInstalacionLuz: "", cantidadLuminarias: "", potenciaLuminaria: "", ubicacionPanelSolar: "", horasIluminacion: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
     estadoInstalacion: "Pendiente de programación", estadoBodega: "Pendiente",
+    garantiaSolicitada: "No", garantiaMotivo: "", garantiaDetalleFalla: "", garantiaFechaSolicitud: "",
+    garantiaJefeTecnico: "Pendiente", garantiaJefeTecnicoPor: "", garantiaJefeTecnicoFecha: "",
+    garantiaJefatura: "Pendiente", garantiaJefaturaPor: "", garantiaJefaturaFecha: "",
     ...(cotizacion.ordenPedido || {}),
   };
   const [form, setForm] = useState(() => {
@@ -801,6 +804,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     ...prev, [key]: value,
     ...(key === "estadoPago" && value === "Abonado" && !prev.fechaAnticipo ? { fechaAnticipo: todayISO() } : {}),
     ...(key === "estadoPago" && value === "Cancelado" && !prev.fechaCancelado ? { fechaCancelado: todayISO(), saldo: "0" } : {}),
+    ...(key === "garantiaSolicitada" && value === "Sí" && !prev.garantiaFechaSolicitud ? { garantiaFechaSolicitud: todayISO() } : {}),
   }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
   const generateOrder = () => { clearDraft(draftKey); onGenerate(form); };
@@ -809,6 +813,13 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   const isTechnicalArea = ["Técnico", "Jefe técnico"].includes(currentUser?.rol);
   const canAssignTechnician = currentUser?.rol === "Jefe técnico" || ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
   const technicians = vendedores.filter(user => user.rol === "Técnico");
+  const isWarrantyBoss = ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
+  const warrantyReady = form.garantiaSolicitada === "Sí" && form.garantiaJefeTecnico === "Aceptada" && form.garantiaJefatura === "Aceptada";
+  const warrantyDecision = (area, accepted) => {
+    const now = new Date().toISOString();
+    if (area === "tecnico") setForm(prev => ({ ...prev, garantiaJefeTecnico: accepted ? "Aceptada" : "No aceptada", garantiaJefeTecnicoPor: currentUser.nombre, garantiaJefeTecnicoFecha: now, ...(accepted ? {} : { garantiaJefatura: "Pendiente", garantiaJefaturaPor: "", garantiaJefaturaFecha: "" }) }));
+    else setForm(prev => ({ ...prev, garantiaJefatura: accepted ? "Aceptada" : "No aceptada", garantiaJefaturaPor: currentUser.nombre, garantiaJefaturaFecha: now }));
+  };
   const field = (label, key, type = "text") => (
     <div><label className="field-label">{label}</label><input className="input" type={type} value={form[key]} onChange={e => set(key, e.target.value)} /></div>
   );
@@ -857,6 +868,25 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
             <div><label className="field-label">Pago del cliente</label><div className={`order-status-box ${form.estadoPago === "Cancelado" ? "done" : ""}`}>{form.estadoPago === "Cancelado" ? "Cancelado (pagado)" : form.estadoPago || "Pendiente"}</div></div>
             <div><label className="field-label">Estado de instalación</label><select className="input" disabled={!['Jefe', 'Jefe técnico', 'Programación'].includes(currentUser?.rol)} value={form.estadoInstalacion || "Pendiente de programación"} onChange={e => set("estadoInstalacion", e.target.value)}><option>Pendiente de programación</option><option>Programada para instalación</option><option>Instalada</option><option>Cancelada</option></select></div>
             <div><label className="field-label">Estado de Bodega</label><select className="input" disabled={!['Jefe', 'Bodega'].includes(currentUser?.rol)} value={form.estadoBodega || "Pendiente"} onChange={e => set("estadoBodega", e.target.value)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></div>
+          </div>
+          {cotizacion.descuentoAutorizado && <div className="authorized-discount-order"><ShieldCheck size={18} /><div><strong>Descuento autorizado por {cotizacion.descuentoAutorizado.autorizadoPor}</strong><span>Total original: {fmtMoney(cotizacion.totalOriginal)} · Descuento: {fmtMoney(cotizacion.descuentoAutorizado.monto)} · Total autorizado: {fmtMoney(cotizacion.total)}</span></div></div>}
+          <h4>Solicitud de garantía</h4>
+          <div className="warranty-card">
+            <div className="form-grid">
+              {select("¿Se solicita garantía?", "garantiaSolicitada", ["No", "Sí"])}
+              <div><label className="field-label">Cliente</label><div className="order-status-box">{contacto?.nombre || cotizacion.contactoNombre || "Sin registrar"}</div></div>
+              <div><label className="field-label">Teléfono</label><div className="order-status-box">{contacto?.telefono || cotizacion.cliente?.telefono || "Sin registrar"}</div></div>
+              <div><label className="field-label">Equipo</label><div className="order-status-box">{(cotizacion.items || []).filter(item => item.productoId !== "transporte_ruta").map(nombreItem).join(", ") || "Sin registrar"}</div></div>
+            </div>
+            {form.garantiaSolicitada === "Sí" && <>
+              <label className="field-label">Razón por la que se solicita la garantía</label><textarea className="input" rows={3} value={form.garantiaMotivo || ""} onChange={e => set("garantiaMotivo", e.target.value)} placeholder="Describe por qué el cliente solicita la garantía" />
+              <label className="field-label">Detalle de la falla y evidencias disponibles</label><textarea className="input" rows={3} value={form.garantiaDetalleFalla || ""} onChange={e => set("garantiaDetalleFalla", e.target.value)} placeholder="Falla reportada, fecha, pruebas realizadas y enlaces de evidencia" />
+              <div className="warranty-approvals">
+                <div><strong>Jefe técnico</strong><span className={`warranty-state ${form.garantiaJefeTecnico === "Aceptada" ? "approved" : form.garantiaJefeTecnico === "No aceptada" ? "denied" : ""}`}>{form.garantiaJefeTecnico}</span><small>{form.garantiaJefeTecnicoPor || "Pendiente de revisión"}</small>{currentUser?.rol === "Jefe técnico" && <div><button type="button" className="btn-primary small" onClick={() => warrantyDecision("tecnico", true)}>Aceptar</button><button type="button" className="btn-ghost small" onClick={() => warrantyDecision("tecnico", false)}>No aceptar</button></div>}</div>
+                <div><strong>Ligia o Leyla</strong><span className={`warranty-state ${form.garantiaJefatura === "Aceptada" ? "approved" : form.garantiaJefatura === "No aceptada" ? "denied" : ""}`}>{form.garantiaJefatura}</span><small>{form.garantiaJefaturaPor || (form.garantiaJefeTecnico === "Aceptada" ? "Pendiente de revisión" : "Requiere primero al Jefe técnico")}</small>{isWarrantyBoss && <div><button type="button" className="btn-primary small" disabled={form.garantiaJefeTecnico !== "Aceptada"} onClick={() => warrantyDecision("jefatura", true)}>Aceptar</button><button type="button" className="btn-ghost small" onClick={() => warrantyDecision("jefatura", false)}>No aceptar</button></div>}</div>
+              </div>
+              <div className={`warranty-result ${warrantyReady ? "ready" : "blocked"}`}>{warrantyReady ? <><CheckCircle2 size={18} /> AUTORIZADA · Proceder con la garantía</> : <><Clock size={18} /> NO PROCEDER · Faltan autorizaciones</>}</div>
+            </>}
           </div>
           <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
           <label className="field-label">Evidencias fotográficas (enlaces de Google Drive)</label>
@@ -1668,6 +1698,7 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
     {currentUser.rol === "Jefe" && <div className="section-card"><h3>Ventas por vendedor</h3><table className="table"><thead><tr><th>Vendedor</th><th>Ventas</th><th>Monto total</th><th>Participación</th></tr></thead><tbody>{sellerRows.map(row => <tr key={row.name}><td>{row.name}</td><td>{row.count}</td><td>{fmtMoney(row.total)}</td><td>{total ? `${(row.total / total * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div>}
     <div className="section-card"><h3>Productos vendidos por producto y categoría</h3><table className="table"><thead><tr><th>Categoría</th><th>Producto</th><th>Unidades</th><th>Monto vendido</th></tr></thead><tbody>{productRows.map(row => <tr key={`${row.category}-${row.product}`}><td>{row.category}</td><td>{row.product}</td><td>{row.quantity}</td><td>{fmtMoney(row.total)}</td></tr>)}</tbody></table></div>
     <div className="section-card"><h3>Detalle de ventas</h3><table className="table"><thead><tr><th>Fecha</th><th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>Estado</th><th>Total</th></tr></thead><tbody>{sold.map(quote => <tr key={quote.id}><td>{fmtDate(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha)}</td><td>{quote.numero}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{quote.ordenPedido?.estadoPago === "Cancelado" ? "Cancelado" : "Aceptada"}</td><td>{fmtMoney(quote.total)}</td></tr>)}</tbody></table></div>
+    <div className="section-card advances-section"><div className="section-title"><ShoppingCart size={18}/><div><h3>Anticipos recibidos</h3><p>Se muestran después de las ventas completas y cerradas.</p></div></div>{advances.length === 0 ? <div className="empty-state">No hay anticipos registrados en el periodo seleccionado.</div> : <><table className="table"><thead><tr><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Orden / Cotización</th><th>Total de venta</th><th>Anticipo</th><th>Saldo</th></tr></thead><tbody>{advances.map(quote => <tr key={quote.id}><td>{fmtDate(quote.ordenPedido.fechaAnticipo)}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{quote.ordenNumero || quote.numero}</td><td>{fmtMoney(quote.total)}</td><td><strong>{fmtMoney(quote.ordenPedido.abono)}</strong></td><td>{fmtMoney(quote.ordenPedido.saldo || Math.max(0, Number(quote.total || 0) - Number(quote.ordenPedido.abono || 0)))}</td></tr>)}</tbody><tfoot><tr><th colSpan="5">Total de anticipos</th><th>{fmtMoney(advanceAmount)}</th><th></th></tr></tfoot></table></>}</div>
   </div>;
 }
 
@@ -1838,7 +1869,22 @@ export default function CasaSolarCRM() {
   const updateCotizacion = async (updated) => {
     const shared = await storageGet("casasolar:cotizaciones", true);
     const source = Array.isArray(shared) ? shared : cotizaciones;
-    const next = source.map(c => c.id === updated.id ? { ...updated, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta } : c);
+    const next = source.map(c => {
+      if (c.id !== updated.id) return c;
+      const discount = updated.descuentoAutorizado;
+      const syncedOrder = updated.ordenPedido && discount ? {
+        ...updated.ordenPedido,
+        descuentoAutorizadoMonto: discount.monto,
+        descuentoAutorizadoTipo: discount.tipo,
+        descuentoAutorizadoValor: discount.valor,
+        descuentoAutorizadoPor: discount.autorizadoPor,
+        descuentoAutorizadoFecha: discount.autorizadoEn,
+        totalAntesDescuento: updated.totalOriginal,
+        totalConDescuento: updated.total,
+        saldo: updated.ordenPedido.estadoPago === "Cancelado" ? "0" : String(Math.max(0, Number(updated.total || 0) - Number(updated.ordenPedido.abono || 0))),
+      } : updated.ordenPedido;
+      return { ...updated, ordenPedido: syncedOrder, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta };
+    });
     setCotizaciones(next);
     await storageSet("casasolar:cotizaciones", next, true);
     if (updated.descuentoSolicitud?.id) {
@@ -2161,6 +2207,21 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .evaluation-route-note { display:flex; align-items:center; gap:8px; background:#EEF4FF; color:#344054; border-radius:8px; padding:9px 11px; margin-bottom:15px; font-size:12px; }
 .order-status-box { background:#F7F5F0; border:1px solid #E4E0D8; border-radius:8px; padding:9px 10px; min-height:38px; font-size:13px; }
 .order-status-box.done { background:#DCFCE7; border-color:#86EFAC; color:#166534; font-weight:700; }
+.authorized-discount-order { display:flex; align-items:center; gap:10px; background:#EAF3DE; border:1px solid #B6D79B; color:#27500A; border-radius:9px; padding:11px 13px; margin:4px 0 16px; }
+.authorized-discount-order div { display:flex; flex-direction:column; gap:3px; }
+.authorized-discount-order span { font-size:12px; }
+.warranty-card { border:1px solid #E4E0D8; background:#FAF9F6; border-radius:10px; padding:14px; margin-bottom:15px; }
+.warranty-approvals { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
+.warranty-approvals > div { background:#fff; border:1px solid #E4E0D8; border-radius:9px; padding:11px; display:flex; flex-direction:column; gap:7px; }
+.warranty-approvals > div > div { display:flex; gap:6px; margin-top:3px; }
+.warranty-state { background:#FFF2CC; color:#7A4D00; border-radius:14px; padding:4px 8px; font-size:11px; align-self:flex-start; }
+.warranty-state.approved { background:#EAF3DE; color:#27500A; }
+.warranty-state.denied { background:#FCEBEB; color:#791F1F; }
+.warranty-result { display:flex; align-items:center; justify-content:center; gap:7px; padding:11px; border-radius:9px; margin-top:12px; font-weight:700; }
+.warranty-result.ready { background:#DCFCE7; color:#166534; border:1px solid #86EFAC; }
+.warranty-result.blocked { background:#FFF2CC; color:#7A4D00; border:1px solid #F0D98B; }
+.advances-section { margin-top:22px; border-top:4px solid #E30613; }
+.advances-section .section-title p { font-size:12px; color:#667085; }
 .planning-filters { display:flex; align-items:center; gap:16px; }
 .planning-filters .role-toggle { margin:0; min-width:260px; }
 .planning-filters .input { margin:0; max-width:220px; }
@@ -2240,6 +2301,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .user-access-grid label:last-child { grid-column:auto; }
   .order-summary-grid { grid-template-columns:1fr; }
   .evaluation-type-buttons { grid-template-columns:1fr; }
+  .warranty-approvals { grid-template-columns:1fr; }
   .report-head { align-items:flex-start; flex-direction:column; }
   .sales-bar-row { grid-template-columns:52px minmax(80px,1fr) 90px; }
 }

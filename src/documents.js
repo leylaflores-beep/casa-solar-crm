@@ -174,7 +174,12 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
     columnStyles: { 0: { cellWidth: 53 }, 1: { cellWidth: 14, halign: "center" }, 2: { cellWidth: 25, halign: "right" } },
   });
   const tableEnd = doc.lastAutoTable.finalY;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.text(`TOTAL: ${money(quote.total)}`, 101, tableEnd + 6, { align: "right" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+  if (quote.descuentoAutorizado) {
+    doc.text(`Total original: ${money(quote.totalOriginal)}`, 101, tableEnd + 5, { align: "right" });
+    doc.text(`Descuento autorizado: -${money(quote.descuentoAutorizado.monto)}`, 101, tableEnd + 10, { align: "right" });
+    doc.text(`TOTAL AUTORIZADO: ${money(quote.total)}`, 101, tableEnd + 15, { align: "right" });
+  } else doc.text(`TOTAL: ${money(quote.total)}`, 101, tableEnd + 6, { align: "right" });
 
   section(108, 103, 96, "DATOS DE FACTURACIÓN");
   lineField("Nombre", client.nombre, 111, 115, 90);
@@ -244,7 +249,10 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   doc.setFont("helvetica", "bold"); doc.text("Garantía:", 15, 304);
   doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(order.garantia || "Según condiciones del producto", 68), 34, 304);
   doc.setFont("helvetica", "bold"); doc.text("Observaciones:", 15, 310);
-  doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(order.observaciones || quote.notas || "", 64), 38, 310);
+  const warrantyText = order.garantiaSolicitada === "Sí"
+    ? `Solicitud: ${order.garantiaMotivo || "Sin motivo"}. Jefe técnico: ${order.garantiaJefeTecnico || "Pendiente"}. Jefatura: ${order.garantiaJefatura || "Pendiente"}. ${order.garantiaJefeTecnico === "Aceptada" && order.garantiaJefatura === "Aceptada" ? "PROCEDER CON GARANTÍA" : "NO PROCEDER"}.`
+    : (order.observaciones || quote.notas || "");
+  doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(warrantyText, 64).slice(0, 3), 38, 310);
   doc.setFontSize(5.5); doc.text("Los pagos realizados no son reembolsables. Equipo sujeto a disponibilidad. Cambios de instalación pueden generar costos adicionales.", 108, 309, { maxWidth: 94 });
   doc.line(18, 322, 65, 322); doc.line(84, 322, 131, 322); doc.line(150, 322, 198, 322);
   doc.setFontSize(6); doc.text("Firma del cliente", 41, 326, { align: "center" }); doc.text("Firma del asesor", 107, 326, { align: "center" }); doc.text("Firma de Operaciones", 174, 326, { align: "center" });
