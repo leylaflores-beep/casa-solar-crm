@@ -15,6 +15,7 @@ import {
   profileFromFirebaseUser,
   savePublicCampaign,
   setSharedData,
+  subscribeSharedData,
 } from "./firebase.js";
 import { downloadOrderPdf, downloadQuotePdf } from "./documents.js";
 import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } from "./Campaigns.jsx";
@@ -205,7 +206,8 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], onLogout }) {
   ];
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
   const pendingDiscounts = cotizaciones.filter(q => q.descuentoSolicitud?.estado === "Pendiente").length;
-  if (currentUser.rol === "Jefe") items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
+  const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
+  if (canReviewDiscounts) items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
   if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
   if (["Jefe", "Bodega"].includes(currentUser.rol)) items.push({ id: "bodega", label: "Bodega", icon: Package });
   if (["Jefe", "Facturación"].includes(currentUser.rol)) items.push({ id: "facturacion", label: "Facturación", icon: FileText });
@@ -864,25 +866,42 @@ function DiscountAuthorizationModal({ cotizacion, currentUser, onClose, onUpdate
   const finalTotal = Math.max(0, baseTotal - discountAmount);
   const valid = numericValue > 0 && Boolean(reason.trim()) && discountAmount > 0 && discountAmount < baseTotal && (type !== "Porcentaje" || numericValue <= 100);
 
-  const requestDiscount = () => {
+  const requestDiscount = async () => {
     if (!valid) return window.alert("Revisa el descuento. Debe ser mayor a cero, menor al total e incluir un motivo.");
     const request = { id: uid(), estado: "Pendiente", tipo: type, valor: numericValue, monto: discountAmount, motivo: reason.trim(), solicitadoPor: currentUser.nombre, solicitadoPorEmail: currentUser.email, solicitadoEn: new Date().toISOString() };
-    onUpdate({ ...cotizacion, totalOriginal: baseTotal, descuentoSolicitud: request, descuentoHistorial: [...(cotizacion.descuentoHistorial || []), { ...request, accion: "Solicitado" }] });
-    window.alert("La solicitud quedó registrada. Ligia Molina o Leyla podrán autorizarla al ingresar con su usuario."); onClose();
+    try {
+      await onUpdate({ ...cotizacion, totalOriginal: baseTotal, descuentoSolicitud: request, descuentoHistorial: [...(cotizacion.descuentoHistorial || []), { ...request, accion: "Solicitado" }] });
+      window.alert("Solicitud enviada correctamente. Ya aparece en Descuentos pendientes para Ligia Molina y Leyla.");
+      onClose();
+    } catch (error) {
+      console.error("No se pudo enviar la solicitud de descuento:", error);
+      window.alert("No se pudo enviar la solicitud. Revisa tu conexión e inténtalo nuevamente.");
+    }
   };
 
-  const authorize = () => {
+  const authorize = async () => {
     if (!canAuthorize) return window.alert("Solo Ligia Molina o Leyla pueden autorizar descuentos adicionales.");
     if (!valid) return window.alert("Revisa el descuento. Debe ser mayor a cero, menor al total e incluir un motivo.");
     const authorized = { id: pending?.id || uid(), estado: "Autorizado", tipo: type, valor: numericValue, monto: discountAmount, motivo: reason.trim(), solicitadoPor: pending?.solicitadoPor || currentUser.nombre, solicitadoPorEmail: pending?.solicitadoPorEmail || currentUser.email, solicitadoEn: pending?.solicitadoEn || new Date().toISOString(), autorizadoPor: currentUser.nombre, autorizadoPorEmail: currentUser.email, autorizadoEn: new Date().toISOString(), totalAnterior: baseTotal, totalFinal: finalTotal };
-    onUpdate({ ...cotizacion, totalOriginal: baseTotal, total: finalTotal, descuentoSolicitud: authorized, descuentoAutorizado: authorized, descuentoHistorial: [...(cotizacion.descuentoHistorial || []), { ...authorized, accion: "Autorizado" }] });
-    window.alert(`Descuento autorizado por ${currentUser.nombre}. Nuevo total: ${fmtMoney(finalTotal)}.`); onClose();
+    try {
+      await onUpdate({ ...cotizacion, totalOriginal: baseTotal, total: finalTotal, descuentoSolicitud: authorized, descuentoAutorizado: authorized, descuentoHistorial: [...(cotizacion.descuentoHistorial || []), { ...authorized, accion: "Autorizado" }] });
+      window.alert(`Descuento autorizado por ${currentUser.nombre}. Nuevo total: ${fmtMoney(finalTotal)}.`); onClose();
+    } catch (error) {
+      console.error("No se pudo autorizar el descuento:", error);
+      window.alert("No se pudo guardar la autorización. Revisa tu conexión e inténtalo nuevamente.");
+    }
   };
 
-  const reject = () => {
+  const reject = async () => {
     if (!canAuthorize || !pending) return;
     const rejected = { ...pending, estado: "Rechazado", rechazadoPor: currentUser.nombre, rechazadoPorEmail: currentUser.email, rechazadoEn: new Date().toISOString() };
-    onUpdate({ ...cotizacion, descuentoSolicitud: rejected, descuentoHistorial: [...(cotizacion.descuentoHistorial || []), { ...rejected, accion: "Rechazado" }] }); onClose();
+    try {
+      await onUpdate({ ...cotizacion, descuentoSolicitud: rejected, descuentoHistorial: [...(cotizacion.descuentoHistorial || []), { ...rejected, accion: "Rechazado" }] });
+      onClose();
+    } catch (error) {
+      console.error("No se pudo rechazar el descuento:", error);
+      window.alert("No se pudo guardar el rechazo. Revisa tu conexión e inténtalo nuevamente.");
+    }
   };
 
   return <div className="modal-overlay" onClick={onClose}><div className="modal discount-modal" onClick={e => e.stopPropagation()}>
@@ -1468,7 +1487,7 @@ function DiscountRequestsView({ cotizaciones, contactos, currentUser, onUpdate }
   const quote = selected ? cotizaciones.find(item => item.id === selected) : null;
   return <div><div className="page-head"><h2>Descuentos pendientes</h2><p>Solicitudes enviadas por los vendedores para autorización.</p></div>
     <div className="section-card">{pending.length === 0 ? <div className="empty-state">No hay descuentos pendientes de revisión.</div> : <table className="table"><thead><tr><th>Fecha</th><th>Vendedor</th><th>Cliente</th><th>Cotización</th><th>Descuento</th><th>Motivo</th><th></th></tr></thead><tbody>{pending.map(item => { const request = item.descuentoSolicitud; return <tr key={item.id}><td>{new Date(request.solicitadoEn).toLocaleDateString("es-GT")}</td><td>{request.solicitadoPor}</td><td>{contactos.find(c => c.id === item.contactoId)?.nombre || item.contactoNombre}</td><td>{item.numero}</td><td>{request.tipo === "Porcentaje" ? `${request.valor}%` : fmtMoney(request.monto)}</td><td>{request.motivo}</td><td><button className="btn-primary" onClick={() => setSelected(item.id)}>Revisar</button></td></tr>; })}</tbody></table>}</div>
-    {quote && <DiscountAuthorizationModal cotizacion={quote} currentUser={currentUser} onClose={() => setSelected(null)} onUpdate={updated => { onUpdate(updated); setSelected(null); }} />}
+    {quote && <DiscountAuthorizationModal cotizacion={quote} currentUser={currentUser} onClose={() => setSelected(null)} onUpdate={async updated => { const result = await onUpdate(updated); setSelected(null); return result; }} />}
   </div>;
 }
 
@@ -1636,6 +1655,13 @@ export default function CasaSolarCRM() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    return subscribeSharedData("casasolar:cotizaciones", value => {
+      if (Array.isArray(value)) setCotizaciones(value);
+    }, error => console.error("No se pudieron actualizar las solicitudes en tiempo real:", error));
+  }, [currentUser?.uid]);
+
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
   const persistContactos = (list) => { setContactos(list); storageSet("casasolar:contactos", list, true); };
   const persistCotizaciones = (list) => { setCotizaciones(list); storageSet("casasolar:cotizaciones", list, true); };
@@ -1699,7 +1725,14 @@ export default function CasaSolarCRM() {
     persistCotizaciones([{ ...data, id: uid(), numero, validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre, cliente }, ...cotizaciones]);
   };
   const updateCotizacionEstado = (id, estado) => persistCotizaciones(cotizaciones.map(c => c.id === id ? { ...c, estado, fechaVenta: estado === "Aceptada" ? (c.fechaVenta || todayISO()) : c.fechaVenta } : c));
-  const updateCotizacion = (updated) => persistCotizaciones(cotizaciones.map(c => c.id === updated.id ? { ...updated, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta } : c));
+  const updateCotizacion = async (updated) => {
+    const shared = await storageGet("casasolar:cotizaciones", true);
+    const source = Array.isArray(shared) ? shared : cotizaciones;
+    const next = source.map(c => c.id === updated.id ? { ...updated, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta } : c);
+    setCotizaciones(next);
+    await storageSet("casasolar:cotizaciones", next, true);
+    return next.find(c => c.id === updated.id);
+  };
   const addSeguimiento = (data) => {
     const contacto = contactos.find(c => c.id === data.contactoId);
     persistSeguimientos([{ ...data, id: uid(), contactoNombre: contacto?.nombre }, ...seguimientos]);

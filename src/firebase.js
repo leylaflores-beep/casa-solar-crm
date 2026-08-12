@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
-import { doc, getDoc, getFirestore, setDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, getFirestore, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCkDZgfSyIM_KwfA68w5cRN9jj-S4lSeJU",
@@ -35,7 +35,7 @@ export async function profileFromFirebaseUser(user) {
     uid: user.uid,
     email,
     nombre: savedProfile?.nombre || adminName || user.displayName || fallbackName || "Vendedor",
-    rol: savedProfile?.rol || (adminName ? "Jefe" : "Vendedor"),
+    rol: adminName ? "Jefe" : (savedProfile?.rol || "Vendedor"),
   };
 }
 
@@ -89,6 +89,12 @@ export async function setSharedData(key, value) {
     value,
     updatedAt: new Date().toISOString(),
   });
+}
+
+export function subscribeSharedData(key, callback, onError) {
+  return onSnapshot(doc(db, "crm_data", documentName(key)), snapshot => {
+    callback(snapshot.exists() ? snapshot.data().value : null);
+  }, onError);
 }
 
 export async function savePublicCampaign(campaign) {
