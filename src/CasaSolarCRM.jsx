@@ -908,13 +908,13 @@ function DiscountAuthorizationModal({ cotizacion, currentUser, onClose, onUpdate
     <div className="modal-head"><div><h3>{canAuthorize ? "Autorizar descuento adicional" : "Solicitar descuento adicional"}</h3><small>Cotización {cotizacion.numero} · Total actual {fmtMoney(baseTotal)}</small></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>
     <div className="modal-body">
       {pending && <div className="pending-discount"><Clock size={16}/><span>Solicitud pendiente de <strong>{pending.solicitadoPor}</strong></span></div>}
-      <label className="field-label">Tipo de descuento</label><select className="input" value={type} onChange={e => setType(e.target.value)}><option>Porcentaje</option><option>Monto fijo en quetzales</option></select>
-      <label className="field-label">{type === "Porcentaje" ? "Porcentaje a descontar" : "Monto a descontar (Q)"}</label><input className="input" type="number" min="0" max={type === "Porcentaje" ? "100" : baseTotal} value={value} onChange={e => setValue(e.target.value)} placeholder={type === "Porcentaje" ? "Ej. 5" : "Ej. 500"}/>
-      <label className="field-label">Motivo del descuento</label><textarea className="input" rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="Ej. Cliente recurrente, compra de varias unidades o autorización comercial especial"/>
+      <label className="field-label">Tipo de descuento</label><select className="input" value={type} disabled={canAuthorize} onChange={e => setType(e.target.value)}><option>Porcentaje</option><option>Monto fijo en quetzales</option></select>
+      <label className="field-label">{type === "Porcentaje" ? "Porcentaje a descontar" : "Monto a descontar (Q)"}</label><input className="input" type="number" min="0" max={type === "Porcentaje" ? "100" : baseTotal} value={value} disabled={canAuthorize} onChange={e => setValue(e.target.value)} placeholder={type === "Porcentaje" ? "Ej. 5" : "Ej. 500"}/>
+      <label className="field-label">Motivo del descuento</label><textarea className="input" rows={3} value={reason} disabled={canAuthorize} onChange={e => setReason(e.target.value)} placeholder="Ej. Cliente recurrente, compra de varias unidades o autorización comercial especial"/>
       <div className="discount-summary"><div><span>Descuento</span><strong>{type === "Porcentaje" ? `${numericValue || 0}% · ` : ""}{fmtMoney(discountAmount)}</strong></div><div><span>Nuevo total</span><strong>{fmtMoney(finalTotal)}</strong></div></div>
       <div className="audit-note"><ShieldCheck size={16}/><span>Se registrará quién solicita, quién autoriza, fecha, tipo, monto y motivo.</span></div>
     </div>
-    <div className="modal-foot">{canAuthorize && pending && <button className="btn-ghost" onClick={reject}>Rechazar</button>}<button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={!valid} onClick={canAuthorize ? authorize : requestDiscount}>{canAuthorize ? <><ShieldCheck size={16}/> Autorizar descuento</> : <><Send size={16}/> Enviar solicitud</>}</button></div>
+    <div className="modal-foot">{canAuthorize && pending && <button className="btn-ghost" onClick={reject}>Rechazar</button>}<button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={!valid || (canAuthorize && !pending)} onClick={canAuthorize ? authorize : requestDiscount}>{canAuthorize ? <><ShieldCheck size={16}/> Autorizar descuento</> : <><Send size={16}/> Enviar solicitud</>}</button></div>
   </div></div>;
 }
 
@@ -922,6 +922,8 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
   const [showOrder, setShowOrder] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
+  const canAuthorizeDiscount = Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
+  const discountState = cotizacion.descuentoSolicitud?.estado || "";
   const logAction = (canal, destinatario) => {
     const registro = {
       id: uid(), canal, destinatario,
@@ -958,7 +960,9 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
       <button className="btn-ghost small" onClick={sendWhatsApp} title="Abrir WhatsApp y registrar el envío"><Send size={14} /> WhatsApp</button>
       <button className="btn-ghost small" onClick={sendEmail} title="Abrir correo y registrar el envío"><Mail size={14} /> Correo</button>
       <button className="btn-ghost small" onClick={() => setShowOrder(true)} title="Llenar y generar orden de pedido"><ShoppingCart size={14} /> Orden</button>
-      <button className="btn-ghost small discount-btn" onClick={() => setShowDiscount(true)} title="Solicitar o autorizar un descuento adicional"><BadgePercent size={14} /> {DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()] ? "Autorizar descuento" : "Solicitar descuento"}</button>
+      {!canAuthorizeDiscount && discountState !== "Pendiente" && discountState !== "Autorizado" && <button className="btn-ghost small discount-btn" onClick={() => setShowDiscount(true)} title="Enviar una solicitud de descuento a Leyla y Ligia"><BadgePercent size={14} /> Solicitar descuento</button>}
+      {!canAuthorizeDiscount && discountState === "Pendiente" && <button className="btn-ghost small discount-btn" disabled title="Esperando autorización de Leyla o Ligia"><Clock size={14} /> Solicitud pendiente</button>}
+      {canAuthorizeDiscount && discountState === "Pendiente" && <button className="btn-primary small discount-btn" onClick={() => setShowDiscount(true)} title="Revisar y autorizar la solicitud del vendedor"><ShieldCheck size={14} /> Autorizar descuento</button>}
       {cotizacion.descuentoSolicitud?.estado && <span className={`discount-status ${cotizacion.descuentoSolicitud.estado.toLowerCase()}`}>{cotizacion.descuentoSolicitud.estado}{cotizacion.descuentoSolicitud.autorizadoPor ? ` · ${cotizacion.descuentoSolicitud.autorizadoPor}` : ""}</span>}
       {(cotizacion.envios || []).length > 0 && (
         <span className="send-count" title={(cotizacion.envios || []).map(e => `${new Date(e.fechaHora).toLocaleString("es-GT")} · ${e.canal} · ${e.usuario}`).join("\n")}>
