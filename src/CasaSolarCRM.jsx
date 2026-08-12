@@ -28,13 +28,16 @@ const WAREHOUSES = {
   guatemala: {
     label: "Bodega Guatemala · Zona 21",
     address: "Colonia Venezuela, Zona 21, Ciudad de Guatemala, Guatemala",
+    searchQueries: ["Colonia Venezuela, Zona 21, Ciudad de Guatemala, Guatemala", "Zona 21, Ciudad de Guatemala, Guatemala"],
   },
   quetzaltenango: {
-    label: "Bodega Central · Quetzaltenango",
-    address: "Plaza Pericentro, Bodega 11, Diagonal 3 D5-51, Quetzaltenango 09001, Guatemala",
+    label: "Bodega Central · Zona 8, Quetzaltenango",
+    address: "Plaza Pericentro, Bodega 11, Diagonal 3 D5-51, Zona 8, Quetzaltenango 09001, Guatemala",
+    searchQueries: ["Plaza Pericentro, Zona 8, Quetzaltenango, Guatemala", "Diagonal 3, Zona 8, Quetzaltenango, Guatemala", "Zona 8, Quetzaltenango, Guatemala"],
   },
 };
 const TRANSPORT_RATE = 7.5;
+const GUATEMALA_DEPARTMENTS = ["Alta Verapaz", "Baja Verapaz", "Chimaltenango", "Chiquimula", "El Progreso", "Escuintla", "Guatemala", "Huehuetenango", "Izabal", "Jalapa", "Jutiapa", "Petén", "Quetzaltenango", "Quiché", "Retalhuleu", "Sacatepéquez", "San Marcos", "Santa Rosa", "Sololá", "Suchitepéquez", "Totonicapán", "Zacapa"];
 
 const readDraft = (key, fallback) => {
   try {
@@ -240,6 +243,7 @@ function PipelineStrip({ contactos }) {
 function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const [warehouse, setWarehouse] = useState("quetzaltenango");
   const [destination, setDestination] = useState("");
+  const [address, setAddress] = useState({ departamento: "Quetzaltenango", municipio: "", lugar: "", zona: "", via: "", nomenclatura: "", casa: "", referencia: "" });
   const [roundTrip, setRoundTrip] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -256,6 +260,15 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     if (!data?.length) throw new Error(`No encontramos la dirección: ${query}`);
     return { lat: Number(data[0].lat), lon: Number(data[0].lon), name: data[0].display_name };
   };
+  const geocodeCandidates = async (queries) => {
+    for (const query of [...new Set(queries.filter(Boolean))]) {
+      try { return await geocode(query); } catch { /* intentar una dirección menos específica */ }
+    }
+    throw new Error("No encontramos la ubicación. Revisa principalmente el municipio y departamento o agrega una referencia conocida.");
+  };
+  const setAddressPart = (key, value) => setAddress(previous => ({ ...previous, [key]: value }));
+  const addressParts = [address.casa, address.nomenclatura, address.via, address.zona && `Zona ${String(address.zona).replace(/^zona\s*/i, "")}`, address.lugar, address.municipio, address.departamento].filter(Boolean);
+  const fullDestination = addressParts.join(", ");
 
   const attachTransport = () => {
     if (!result || !selectedQuoteId) return;
@@ -263,7 +276,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     if (!quote) return setAttachedMessage("No encontramos la cotización seleccionada.");
     const transportItem = {
       id: uid(), productoId: "transporte_ruta", productoNombre: "Transporte",
-      descripcion: `Transporte desde ${WAREHOUSES[warehouse].label} hasta ${destination.trim()} (${roundTrip ? "ida y regreso" : "solo ida"})`,
+      descripcion: `Transporte desde ${WAREHOUSES[warehouse].label} hasta ${fullDestination || destination.trim()} (${roundTrip ? "ida y regreso" : "solo ida"})`,
       tamano: `${result.chargedKm.toFixed(1)} km × Q ${TRANSPORT_RATE.toFixed(2)}`,
       cantidad: 1, precioLista: result.cost, precioUnitario: result.cost,
       ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, kilometros: result.chargedKm, idaYRegreso: roundTrip, tarifaKm: TRANSPORT_RATE },
@@ -283,10 +296,18 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   };
 
   const calculate = async () => {
-    if (!destination.trim()) return setError("Escribe el destino dentro de Guatemala.");
+    if (!address.municipio.trim() || !address.departamento) return setError("Selecciona el departamento y escribe el municipio del cliente.");
     setCalculating(true); setError(""); setResult(null);
     try {
-      const [origin, target] = await Promise.all([geocode(WAREHOUSES[warehouse].address), geocode(`${destination}, Guatemala`)]);
+      const warehouseQueries = [WAREHOUSES[warehouse].address, ...(WAREHOUSES[warehouse].searchQueries || [])];
+      const destinationQueries = [
+        `${[address.referencia, ...addressParts].filter(Boolean).join(", ")}, Guatemala`,
+        `${fullDestination}, Guatemala`,
+        `${[address.via, address.zona && `Zona ${address.zona}`, address.lugar, address.municipio, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
+        `${[address.lugar, address.municipio, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
+        `${address.municipio}, ${address.departamento}, Guatemala`,
+      ];
+      const [origin, target] = await Promise.all([geocodeCandidates(warehouseQueries), geocodeCandidates(destinationQueries)]);
       const routeUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lon},${origin.lat};${target.lon},${target.lat}?overview=false&steps=false`;
       const routeResponse = await fetch(routeUrl);
       const routeData = await routeResponse.json();
@@ -309,8 +330,18 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
             {Object.entries(WAREHOUSES).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}
           </select>
           <div className="address-preview"><MapPin size={16} /><span>{WAREHOUSES[warehouse].address}</span></div>
-          <label className="field-label">Destino dentro de Guatemala</label>
-          <input className="input" value={destination} onChange={e => setDestination(e.target.value)} onKeyDown={e => e.key === "Enter" && calculate()} placeholder="Ej. Parque Central, Cobán, Alta Verapaz" />
+          <h3 className="route-address-title">Dirección del cliente</h3>
+          <div className="route-address-grid">
+            <label><span className="field-label">Departamento *</span><select className="input" value={address.departamento} onChange={e => setAddressPart("departamento", e.target.value)}>{GUATEMALA_DEPARTMENTS.map(item => <option key={item}>{item}</option>)}</select></label>
+            <label><span className="field-label">Municipio *</span><input className="input" value={address.municipio} onChange={e => setAddressPart("municipio", e.target.value)} placeholder="Ej. Cobán" /></label>
+            <label><span className="field-label">Aldea, caserío, colonia o residencial</span><input className="input" value={address.lugar} onChange={e => setAddressPart("lugar", e.target.value)} placeholder="Ej. Aldea Chivencorral" /></label>
+            <label><span className="field-label">Zona</span><input className="input" value={address.zona} onChange={e => setAddressPart("zona", e.target.value)} placeholder="Ej. 3" /></label>
+            <label><span className="field-label">Calle, avenida, carretera o callejón</span><input className="input" value={address.via} onChange={e => setAddressPart("via", e.target.value)} placeholder="Ej. 4a calle / Callejón Los Pinos" /></label>
+            <label><span className="field-label">Nomenclatura</span><input className="input" value={address.nomenclatura} onChange={e => setAddressPart("nomenclatura", e.target.value)} placeholder="Ej. 8-25" /></label>
+            <label><span className="field-label">Casa, lote o número</span><input className="input" value={address.casa} onChange={e => setAddressPart("casa", e.target.value)} placeholder="Ej. Casa 12 / Lote 5" /></label>
+            <label><span className="field-label">Referencia conocida</span><input className="input" value={address.referencia} onChange={e => { setAddressPart("referencia", e.target.value); setDestination(e.target.value); }} placeholder="Ej. Frente a iglesia o escuela" /></label>
+          </div>
+          <div className="address-preview"><MapPin size={16} /><span>{fullDestination || "Completa la dirección del cliente"}</span></div>
           <label className="roundtrip-check"><input type="checkbox" checked={roundTrip} onChange={e => setRoundTrip(e.target.checked)} /> Calcular ida y regreso</label>
           {error && <div className="route-error">{error}</div>}
           <button className="btn-primary" onClick={calculate} disabled={calculating}>{calculating ? "Calculando ruta…" : <><Calculator size={16} /> Calcular distancia y costo</>}</button>
@@ -323,6 +354,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
             <div className="route-formula">{result.chargedKm.toFixed(1)} km × Q {TRANSPORT_RATE.toFixed(2)}</div>
             <div className="route-total"><span>Costo de transporte</span><strong>{fmtMoney(result.cost)}</strong></div>
             <small>Destino encontrado: {result.target.name}</small>
+            <small className="route-match-warning">Verifica que el lugar encontrado corresponda al municipio, zona o aldea del cliente antes de adjuntar el transporte.</small>
             <div className="route-attach">
               <label className="field-label">¿Deseas adjuntarlo a una cotización?</label>
               <select className="input" value={selectedQuoteId} onChange={e => { setSelectedQuoteId(e.target.value); setAttachedMessage(""); }}>
@@ -1797,6 +1829,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 /* Calculadora de rutas */
 .route-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:16px; }
 .route-form .btn-primary { width:100%; justify-content:center; }
+.route-address-title { font-size:15px; margin:4px 0 12px; }
+.route-address-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 10px; }
 .address-preview { display:flex; align-items:flex-start; gap:8px; background:#F7F5F0; border-radius:8px; padding:10px; color:#4A5568; font-size:12px; margin:-4px 0 14px; }
 .address-preview svg { color:#E30613; flex-shrink:0; }
 .roundtrip-check { display:flex; align-items:center; gap:8px; font-size:12.5px; margin:0 0 14px; }
@@ -1813,6 +1847,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .route-total { display:flex; justify-content:space-between; align-items:center; background:#14171A; color:#fff; border-radius:10px; padding:14px; }
 .route-total strong { color:#fff; font:18px 'IBM Plex Mono',monospace; }
 .route-result small { color:#8A8F98; line-height:1.4; margin-top:12px; }
+.route-result .route-match-warning { color:#7A4D00; background:#FFF7DD; padding:8px 9px; border-radius:7px; }
 .route-attach { border-top:1px solid #E4E0D8; margin-top:14px; padding-top:14px; }
 .route-attach .btn-primary { width:100%; justify-content:center; margin-bottom:10px; }
 .route-attach .form-success { margin-top:2px; }
@@ -1833,6 +1868,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .client-preview { grid-template-columns:1fr; }
   .client-preview .full { grid-column:auto; }
   .route-layout { grid-template-columns:1fr; }
+  .route-address-grid { grid-template-columns:1fr; }
   .discount-summary { grid-template-columns:1fr; }
   .user-access-grid { grid-template-columns:1fr; }
   .user-access-grid label:last-child { grid-column:auto; }
