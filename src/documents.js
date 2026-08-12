@@ -9,8 +9,8 @@ const itemName = (item) => {
   return item?.productoNombre || item?.producto || item?.nombre || item?.productoId || "Producto sin especificar";
 };
 const itemDescription = (item) => [
-  itemName(item),
-  item?.tamano ? `Tamaño: ${item.tamano}` : "",
+  item?.productoId === "transporte_ruta" ? "Transporte" : itemName(item),
+  item?.productoId !== "transporte_ruta" && item?.tamano ? `Tamaño: ${item.tamano}` : "",
   item?.altura ? `Altura: ${item.altura}` : "",
   item?.compatibilidad ? `Compatible con: ${item.compatibilidad}` : "",
 ].filter(Boolean).join(" - ");

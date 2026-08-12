@@ -100,6 +100,7 @@ const fmtMoney = (n) => new Intl.NumberFormat("es-GT", { style: "currency", curr
 const canalIcon = (canal) => (CANALES.find(c => c.id === canal) || CANALES[CANALES.length - 1]).icon;
 const productoNombre = (id) => (CATALOGO.find(p => p.id === id) || {}).nombre || id;
 const nombreItem = (item) => {
+  if (item?.productoId === "transporte_ruta") return "Transporte";
   const descripcion = String(item?.descripcion || "").trim();
   if (descripcion && descripcion.toLowerCase() !== "producto") return descripcion;
   return item?.productoNombre || item?.producto || item?.nombre || productoNombre(item?.productoId) || "Producto sin especificar";
@@ -176,7 +177,7 @@ function LoginScreen({ onLogin }) {
 }
 
 function Sidebar({ tab, setTab, currentUser, onLogout }) {
-  const operationalRole = ["Técnico", "Programación", "Bodega", "Facturación"].includes(currentUser.rol);
+  const operationalRole = ["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].includes(currentUser.rol);
   const items = operationalRole ? [
     { id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench },
   ] : [
@@ -250,6 +251,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const [calculating, setCalculating] = useState(false);
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [attachedMessage, setAttachedMessage] = useState("");
+  const [pendingSaved, setPendingSaved] = useState(false);
   const visibleQuotes = currentUser.rol === "Jefe" ? cotizaciones : cotizaciones.filter(item => item.vendedor === currentUser.nombre);
 
   const geocode = async (query) => {
@@ -269,18 +271,17 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const setAddressPart = (key, value) => setAddress(previous => ({ ...previous, [key]: value }));
   const addressParts = [address.casa, address.nomenclatura, address.via, address.zona && `Zona ${String(address.zona).replace(/^zona\s*/i, "")}`, address.lugar, address.municipio, address.departamento].filter(Boolean);
   const fullDestination = addressParts.join(", ");
+  const transportFromResult = () => ({
+    id: uid(), productoId: "transporte_ruta", productoNombre: "Transporte", descripcion: "Transporte", tamano: "",
+    cantidad: 1, precioLista: result.cost, precioUnitario: result.cost,
+    ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, direccionIngresada: fullDestination, referencia: address.referencia, kilometros: result.chargedKm, distanciaUnaVia: result.oneWayKm, idaYRegreso: roundTrip, tarifaKm: TRANSPORT_RATE },
+  });
 
   const attachTransport = () => {
     if (!result || !selectedQuoteId) return;
     const quote = cotizaciones.find(item => item.id === selectedQuoteId);
     if (!quote) return setAttachedMessage("No encontramos la cotización seleccionada.");
-    const transportItem = {
-      id: uid(), productoId: "transporte_ruta", productoNombre: "Transporte",
-      descripcion: `Transporte desde ${WAREHOUSES[warehouse].label} hasta ${fullDestination || destination.trim()} (${roundTrip ? "ida y regreso" : "solo ida"})`,
-      tamano: `${result.chargedKm.toFixed(1)} km × Q ${TRANSPORT_RATE.toFixed(2)}`,
-      cantidad: 1, precioLista: result.cost, precioUnitario: result.cost,
-      ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, kilometros: result.chargedKm, idaYRegreso: roundTrip, tarifaKm: TRANSPORT_RATE },
-    };
+    const transportItem = transportFromResult();
     const items = [...(quote.items || []), transportItem];
     const total = items.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
     const updated = { ...quote, items, total };
@@ -293,6 +294,12 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     onUpdateCotizacion(updated);
     setAttachedMessage(`Transporte agregado a ${quote.numero || "la cotización"}.`);
     setSelectedQuoteId("");
+  };
+  const saveForNextQuote = () => {
+    if (!result) return;
+    saveDraft(`casasolar:transportePendiente:${currentUser.nombre}`, transportFromResult());
+    setPendingSaved(true);
+    setAttachedMessage("Transporte guardado. Aparecerá al crear tu próxima cotización.");
   };
 
   const calculate = async () => {
@@ -315,6 +322,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
       const oneWayKm = routeData.routes[0].distance / 1000;
       const chargedKm = oneWayKm * (roundTrip ? 2 : 1);
       setResult({ origin, target, oneWayKm, chargedKm, cost: chargedKm * TRANSPORT_RATE });
+      setPendingSaved(false); setAttachedMessage("");
     } catch (reason) {
       setError(reason?.message || "No pudimos calcular la ruta. Revisa la dirección e inténtalo de nuevo.");
     } finally { setCalculating(false); }
@@ -355,6 +363,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
             <div className="route-total"><span>Costo de transporte</span><strong>{fmtMoney(result.cost)}</strong></div>
             <small>Destino encontrado: {result.target.name}</small>
             <small className="route-match-warning">Verifica que el lugar encontrado corresponda al municipio, zona o aldea del cliente antes de adjuntar el transporte.</small>
+            <button className="btn-primary route-save-next" onClick={saveForNextQuote} disabled={pendingSaved}><ShoppingCart size={16} /> {pendingSaved ? "Guardado para próxima cotización" : "Guardar para la próxima cotización"}</button>
             <div className="route-attach">
               <label className="field-label">¿Deseas adjuntarlo a una cotización?</label>
               <select className="input" value={selectedQuoteId} onChange={e => { setSelectedQuoteId(e.target.value); setAttachedMessage(""); }}>
@@ -548,6 +557,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
 
 function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSave, onClose }) {
   const draftKey = `casasolar:draft:cotizacion:${initial?.id || initialContactId || "nueva"}`;
+  const pendingTransportKey = `casasolar:transportePendiente:${vendedor}`;
   const savedDraft = useMemo(() => readDraft(draftKey, {}), [draftKey]);
   const [contactoId, setContactoId] = useState(savedDraft.contactoId || initial?.contactoId || initialContactId || (contactos[0]?.id || ""));
   const [items, setItems] = useState(() => (savedDraft.items || initial?.items || []).map(item => ({ ...item, id: item.id || uid() })));
@@ -564,6 +574,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const [promocion, setPromocion] = useState(savedDraft.promocion ?? initial?.promocion ?? "");
   const [garantiaAnios, setGarantiaAnios] = useState(savedDraft.garantiaAnios ?? initial?.garantiaAnios ?? String(initial?.garantia || "").replace(/[^0-9]/g, ""));
   const [editingItemId, setEditingItemId] = useState(savedDraft.editingItemId || null);
+  const [pendingTransport, setPendingTransport] = useState(() => initial ? null : readDraft(pendingTransportKey, null));
   const clienteSeleccionado = contactos.find(c => c.id === contactoId);
   const esEstructura = String(prod).startsWith("estructura_");
 
@@ -600,6 +611,12 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
     setAltura(item.altura || ""); setCompatibilidad(item.compatibilidad || "");
     setPrecioLista(item.precioLista ?? item.precioUnitario ?? ""); setPrecio(item.precioUnitario ?? item.precio ?? "");
   };
+  const addPendingTransport = () => {
+    if (!pendingTransport) return;
+    setItems(list => [...list, { ...pendingTransport, id: pendingTransport.id || uid(), descripcion: "Transporte", tamano: "" }]);
+    clearDraft(pendingTransportKey);
+    setPendingTransport(null);
+  };
 
   return (
     <div className="modal-overlay">
@@ -622,6 +639,8 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
               <span className="full"><strong>Dirección:</strong> {clienteSeleccionado.direccion || "Sin registrar"}</span>
             </div>
           )}
+
+          {pendingTransport && <div className="pending-transport-card"><div><ShoppingCart size={17} /><span><strong>Transporte calculado pendiente</strong><small>Importe: {fmtMoney(pendingTransport.precioUnitario)}. Los kilómetros y la tarifa permanecerán internos.</small></span></div><button className="btn-primary" onClick={addPendingTransport}><Plus size={16} /> Agregar a esta cotización</button></div>}
 
           <label className="field-label">Agregar producto o servicio</label>
           <div className="item-row quote-item-grid">
@@ -737,6 +756,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     gradas: "Sí", entraCamion: "Sí", formaPago: "Transferencia",
     abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
     garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
+    evidenciasFotograficas: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
     ...(cotizacion.ordenPedido || {}),
   };
@@ -751,7 +771,8 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   const generateOrder = () => { clearDraft(draftKey); onGenerate(form); };
   const saveOrder = () => { clearDraft(draftKey); onSave?.(form); };
   const isTechnician = currentUser?.rol === "Técnico";
-  const canAssignTechnician = ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
+  const isTechnicalArea = ["Técnico", "Jefe técnico"].includes(currentUser?.rol);
+  const canAssignTechnician = currentUser?.rol === "Jefe técnico" || ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
   const technicians = vendedores.filter(user => user.rol === "Técnico");
   const field = (label, key, type = "text") => (
     <div><label className="field-label">{label}</label><input className="input" type={type} value={form[key]} onChange={e => set(key, e.target.value)} /></div>
@@ -783,11 +804,14 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
           <h4>Datos técnicos</h4>
           <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>
-          <h4>{isTechnician ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
-          {!isTechnician && <><div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div><div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
+          <h4>{isTechnicalArea ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
+          {!isTechnicalArea && <><div className="form-grid">{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div><div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
           <label className="field-label">Observaciones adicionales</label><textarea className="input" rows={3} value={form.observaciones} onChange={e => set("observaciones", e.target.value)} />
+          <label className="field-label">Evidencias fotográficas (enlaces de Google Drive)</label>
+          <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
+          {String(form.evidenciasFotograficas || "").split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).length > 0 && <div className="photo-links">{String(form.evidenciasFotograficas).split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).map((link, index) => <a key={`${link}-${index}`} href={link.trim()} target="_blank" rel="noreferrer"><Camera size={14} /> Abrir evidencia {index + 1}</a>)}</div>}
         </div>
-        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnician && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnicalArea && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
       </div>
     </div>
   );
@@ -1155,7 +1179,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
                   <td><strong>{c.numero || "—"}</strong></td>
                   <td>{fmtDate(c.fecha)}</td>
                   <td>{contacto ? contacto.nombre : "—"}</td>
-                  <td>{c.items.map(i => i.descripcion || productoNombre(i.productoId)).join(", ")}</td>
+                  <td>{c.items.map(nombreItem).join(", ")}</td>
                   <td>{fmtMoney(c.total)}</td>
                   <td>{c.vendedor}</td>
                   <td>
@@ -1276,7 +1300,7 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
           <label><span className="field-label">Nombre completo</span><input className="input" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre del usuario" /></label>
           <label><span className="field-label">Correo electrónico</span><input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@correo.com" /></label>
           <label><span className="field-label">Contraseña inicial</span><input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /></label>
-          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
+          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
           <label><span className="field-label">WhatsApp</span><input className="input" value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="Número opcional" /></label>
           {rol === "Técnico" && <label><span className="field-label">Departamentos que cubre</span><input className="input" value={departamentosCobertura} onChange={e => setDepartamentosCobertura(e.target.value)} placeholder="Ej. Guatemala, Sacatepéquez y Chimaltenango" /></label>}
         </div>
@@ -1312,7 +1336,7 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
   const visible = cotizaciones.filter(quote => {
     if (!quote.ordenPedido) return false;
     const stage = quote.ordenFlujo?.etapa || "Pendiente de asignación";
-    if (role === "Jefe") return true;
+    if (["Jefe", "Jefe técnico"].includes(role)) return true;
     if (role === "Técnico") return String(quote.ordenPedido.tecnicoAsignadoEmail || "").toLowerCase() === String(currentUser.email || "").toLowerCase();
     if (role === "Programación") return ["Programación", "Bodega y Facturación", "Completada"].includes(stage);
     if (["Bodega", "Facturación"].includes(role)) return ["Bodega y Facturación", "Completada"].includes(stage);
@@ -1428,7 +1452,7 @@ export default function CasaSolarCRM() {
       setLoading(true);
       const profile = await profileFromFirebaseUser(firebaseUser);
       setCurrentUser(profile);
-      if (["Técnico", "Programación", "Bodega", "Facturación"].includes(profile.rol)) setTab("ordenes-tecnicas");
+      if (["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].includes(profile.rol)) setTab("ordenes-tecnicas");
       const [v, c, q, s, camp] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
@@ -1814,6 +1838,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .technical-order-row > div { display:flex; flex-direction:column; gap:4px; }
 .technical-order-row > div:last-child { align-items:flex-end; }
 .technical-order-row span, .technical-order-row small { color:#667085; font-size:11.5px; }
+.photo-links { display:flex; flex-wrap:wrap; gap:7px; margin:-3px 0 14px; }
+.photo-links a { display:inline-flex; align-items:center; gap:5px; color:#9B1017; background:#FFF0F1; border:1px solid #F7C7CA; border-radius:7px; padding:7px 9px; font-size:11px; text-decoration:none; }
 .report-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .report-filters { display:flex; align-items:end; gap:10px; flex-wrap:wrap; }
 .report-filters label { min-width:155px; flex:1; }
@@ -1848,10 +1874,17 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .route-total strong { color:#fff; font:18px 'IBM Plex Mono',monospace; }
 .route-result small { color:#8A8F98; line-height:1.4; margin-top:12px; }
 .route-result .route-match-warning { color:#7A4D00; background:#FFF7DD; padding:8px 9px; border-radius:7px; }
+.route-save-next { width:100%; justify-content:center; margin-top:12px; }
 .route-attach { border-top:1px solid #E4E0D8; margin-top:14px; padding-top:14px; }
 .route-attach .btn-primary { width:100%; justify-content:center; margin-bottom:10px; }
 .route-attach .form-success { margin-top:2px; }
 .route-note { font-size:11px; margin-top:0; }
+.pending-transport-card { display:flex; justify-content:space-between; align-items:center; gap:12px; background:#FFF7DD; border:1px solid #F0D98B; border-radius:9px; padding:11px 12px; margin:0 0 15px; }
+.pending-transport-card > div { display:flex; align-items:flex-start; gap:8px; }
+.pending-transport-card svg { color:#9B1017; flex-shrink:0; }
+.pending-transport-card span { display:flex; flex-direction:column; gap:3px; }
+.pending-transport-card small { color:#6E4E00; font-size:10.5px; }
+.pending-transport-card .btn-primary { flex-shrink:0; }
 
 .catalog-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap:10px; }
 .catalog-item { display:flex; align-items:center; gap:8px; background:#F7F5F0; border-radius:8px; padding:10px 12px; font-size:13px; }
@@ -1869,6 +1902,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .client-preview .full { grid-column:auto; }
   .route-layout { grid-template-columns:1fr; }
   .route-address-grid { grid-template-columns:1fr; }
+  .pending-transport-card { align-items:stretch; flex-direction:column; }
   .discount-summary { grid-template-columns:1fr; }
   .user-access-grid { grid-template-columns:1fr; }
   .user-access-grid label:last-child { grid-column:auto; }
