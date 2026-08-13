@@ -1,5 +1,5 @@
 import { getApps, initializeApp } from "firebase/app";
-import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
+import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
 import { arrayUnion, doc, getDoc, initializeFirestore, onSnapshot, persistentLocalCache, persistentMultipleTabManager, runTransaction, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -38,6 +38,7 @@ export async function profileFromFirebaseUser(user) {
     email,
     nombre: savedProfile?.nombre || adminName || user.displayName || fallbackName || "Vendedor",
     rol: adminName ? "Jefe" : (savedProfile?.rol || "Vendedor"),
+    activo: adminName ? true : savedProfile?.activo !== false,
   };
 }
 
@@ -79,6 +80,20 @@ export async function logoutFirebase() {
   return signOut(auth);
 }
 
+export async function sendCRMPasswordReset(email) {
+  return sendPasswordResetEmail(auth, email.trim().toLowerCase());
+}
+
+export async function setCRMUserActive(uid, active, changedBy = "") {
+  if (!uid) throw new Error("El usuario no tiene un identificador de Firebase asociado.");
+  await setDoc(doc(db, "crm_data", `user_${uid}`), {
+    activo: Boolean(active),
+    estadoAcceso: active ? "Activo" : "Suspendido",
+    estadoAccesoActualizadoEn: new Date().toISOString(),
+    estadoAccesoActualizadoPor: changedBy,
+  }, { merge: true });
+}
+
 const documentName = (key) => key.replace("casasolar:", "").replace(/[^a-zA-Z0-9_-]/g, "_");
 
 export async function getSharedData(key) {
@@ -118,6 +133,12 @@ export async function updateSharedDataRecords(key, ids, changes) {
 export function subscribeSharedData(key, callback, onError) {
   return onSnapshot(doc(db, "crm_data", documentName(key)), snapshot => {
     callback(snapshot.exists() ? snapshot.data().value : null);
+  }, onError);
+}
+
+export function subscribeCRMUserProfile(uid, callback, onError) {
+  return onSnapshot(doc(db, "crm_data", `user_${uid}`), snapshot => {
+    callback(snapshot.exists() ? snapshot.data() : null);
   }, onError);
 }
 

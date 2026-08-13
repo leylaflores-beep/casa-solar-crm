@@ -27,6 +27,8 @@ El CRM está conectado al proyecto `crm-casa-solar` y guarda los datos compartid
 
 Para activar las reglas incluidas, abre Firestore Database, entra en **Reglas**, copia el contenido de `firestore.rules` y pulsa **Publicar**. Las reglas exigen que el usuario haya iniciado sesión con una cuenta creada en Firebase Authentication.
 
+La pantalla **Equipo** permite mostrar u ocultar la contraseña inicial, enviar restablecimientos por correo, suspender/reactivar accesos y eliminar colaboradores del listado sin borrar su historial comercial. Para que una suspensión bloquee también Firestore, publique las reglas incluidas en esta versión.
+
 Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol de Jefe. Las demás cuentas autorizadas tienen rol de Vendedor. El sistema no permite registro público; las cuentas se crean desde Firebase Authentication.
 
 ## Clientes anteriores y campañas

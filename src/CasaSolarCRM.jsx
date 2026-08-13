@@ -4,7 +4,7 @@ import {
   ClipboardList, LayoutDashboard, Plus, Search, X, LogOut, Settings,
   TrendingUp, Wrench, Trash2, Edit3, ChevronRight, CheckCircle2, Clock,
   ArrowLeft, Package, Filter, Download, Mail, ShoppingCart, Send, Megaphone, Upload,
-  Calculator, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays
+  Calculator, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, UserX, UserCheck
 } from "lucide-react";
 import {
   getSharedData,
@@ -15,8 +15,10 @@ import {
   observeAuth,
   profileFromFirebaseUser,
   savePublicCampaign,
+  sendCRMPasswordReset,
+  setCRMUserActive,
   setSharedData,
-  subscribeSharedData, updateSharedDataRecords,
+  subscribeSharedData, subscribeCRMUserProfile, updateSharedDataRecords,
 } from "./firebase.js";
 import { downloadInstallationReportPdf, downloadOrderPdf, downloadQuotePdf } from "./documents.js";
 import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } from "./Campaigns.jsx";
@@ -1520,11 +1522,12 @@ function CatalogoView() {
   );
 }
 
-function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, onUpdate }) {
+function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, onUpdate, onResetPassword, onToggleAccess }) {
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [rol, setRol] = useState("Vendedor");
   const [departamentosCobertura, setDepartamentosCobertura] = useState("");
   const [creating, setCreating] = useState(false);
@@ -1560,13 +1563,14 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
         <div className="user-access-grid">
           <label><span className="field-label">Nombre completo</span><input className="input" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre del usuario" /></label>
           <label><span className="field-label">Correo electrónico</span><input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@correo.com" /></label>
-          <label><span className="field-label">Contraseña inicial</span><input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /></label>
+          <label><span className="field-label">Contraseña inicial</span><span className="password-field"><input className="input" type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" className="icon-btn" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></span></label>
           <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
           <label><span className="field-label">WhatsApp</span><input className="input" value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="Número opcional" /></label>
           {rol === "Técnico" && <label><span className="field-label">Departamentos que cubre</span><input className="input" value={departamentosCobertura} onChange={e => setDepartamentosCobertura(e.target.value)} placeholder="Ej. Guatemala, Sacatepéquez y Chimaltenango" /></label>}
         </div>
         {message && <p className={message.includes("correctamente") ? "form-success" : "login-error"}>{message}</p>}
         <button className="btn-primary" onClick={createAccess} disabled={creating}><Plus size={16} /> {creating ? "Creando acceso…" : "Crear usuario"}</button>
+        <p className="privacy-note">Por seguridad, Firebase no permite ver una contraseña después de crearla. Si alguien la olvida, utiliza “Restablecer contraseña”; recibirá un enlace seguro en su correo.</p>
       </div>}
       <div className="section-card">
         <h3>Vendedores disponibles</h3>
@@ -1582,7 +1586,10 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
             <div key={v.id} className="mini-row">
               <input className="input compact" style={{ minWidth: 190, flex: 1 }} defaultValue={v.nombre} aria-label={`Nombre de ${v.nombre}`} onBlur={e => onUpdate({ ...v, nombre: e.target.value.trim() })} />
               <input className="input compact" style={{ flex: 1 }} defaultValue={v.telefono || ""} placeholder="Número de WhatsApp" onBlur={e => onUpdate({ ...v, telefono: e.target.value.trim() })} />
-              <button className="icon-btn" onClick={() => onRemove(v.id)}><Trash2 size={14} /></button>
+              <span className={`badge ${v.activo === false ? "badge-gray" : "badge-green"}`}>{v.activo === false ? "Suspendido" : "Activo"}</span>
+              {v.email && <button className="btn-ghost small" onClick={() => onResetPassword(v)} title="Enviar enlace de cambio al correo"><KeyRound size={14}/> Restablecer</button>}
+              <button className="btn-ghost small" onClick={() => onToggleAccess(v, v.activo === false)}>{v.activo === false ? <><UserCheck size={14}/> Reactivar</> : <><UserX size={14}/> Suspender</>}</button>
+              <button className="icon-btn" onClick={() => onRemove(v)} title="Eliminar colaborador del CRM"><Trash2 size={14} /></button>
             </div>
           ))}
         </div>
@@ -1854,6 +1861,12 @@ export default function CasaSolarCRM() {
 
       setLoading(true);
       const profile = await profileFromFirebaseUser(firebaseUser);
+      if (profile.activo === false) {
+        await logoutFirebase();
+        window.alert("Este acceso está suspendido. Comunícate con Leyla para revisar tu estado en la empresa.");
+        setLoading(false);
+        return;
+      }
       setCurrentUser(profile);
       if (["Jefe técnico", "Técnico"].includes(profile.rol)) setTab("ordenes-tecnicas");
       if (profile.rol === "Programación") setTab("programacion");
@@ -1869,6 +1882,13 @@ export default function CasaSolarCRM() {
       ]);
       let sellerList = v || [];
       const linkedSeller = sellerList.find(item => item.uid === profile.uid || item.email === profile.email || item.nombre === profile.nombre);
+      if (linkedSeller?.activo === false) {
+        await setCRMUserActive(profile.uid, false, "Validación automática del CRM");
+        await logoutFirebase();
+        window.alert("Este acceso está suspendido. Comunícate con Leyla para revisar tu estado en la empresa.");
+        setLoading(false);
+        return;
+      }
       if (linkedSeller) {
         const linkedProfile = { ...linkedSeller, uid: profile.uid, email: profile.email };
         sellerList = sellerList.map(item => item.id === linkedSeller.id ? linkedProfile : item);
@@ -1947,6 +1967,12 @@ export default function CasaSolarCRM() {
 
   useEffect(() => {
     if (!currentUser) return undefined;
+    const unsubscribeProfile = subscribeCRMUserProfile(currentUser.uid, profile => {
+      if (profile?.activo === false) {
+        window.alert("Tu acceso al CRM fue suspendido. La sesión se cerrará ahora.");
+        logoutFirebase();
+      }
+    }, error => console.error("No se pudo verificar el estado del acceso:", error));
     const unsubscribeSellers = subscribeSharedData("casasolar:vendedores", value => {
       if (Array.isArray(value)) setVendedores(value);
     }, error => console.error("No se pudo actualizar el equipo en tiempo real:", error));
@@ -1965,7 +1991,7 @@ export default function CasaSolarCRM() {
     const unsubscribeDiscounts = subscribeSharedData("casasolar:descuentos", value => {
       if (Array.isArray(value)) setDescuentoSolicitudes(value);
     }, error => console.error("No se pudo actualizar la bandeja de descuentos:", error));
-    return () => { unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); };
+    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
@@ -2134,7 +2160,41 @@ export default function CasaSolarCRM() {
       }
     }
   };
-  const removeVendedor = (id) => persistVendedores(vendedores.filter(v => v.id !== id));
+  const resetUserPassword = async (user) => {
+    if (!user.email) return window.alert("Este colaborador no tiene un correo de acceso registrado.");
+    if (!window.confirm(`¿Enviar a ${user.email} un enlace seguro para cambiar su contraseña?`)) return;
+    try {
+      await sendCRMPasswordReset(user.email);
+      window.alert(`Enlace de restablecimiento enviado a ${user.email}.`);
+    } catch (error) {
+      console.error("No se pudo enviar el restablecimiento:", error);
+      window.alert("No se pudo enviar el enlace. Verifica el correo y la conexión.");
+    }
+  };
+  const toggleUserAccess = async (user, activate) => {
+    if (String(user.email || "").toLowerCase() === "leyla.flores@gmail.com") return window.alert("El acceso principal de Leyla no puede suspenderse desde esta pantalla.");
+    if (!window.confirm(`${activate ? "¿Reactivar" : "¿Suspender"} el acceso de ${user.nombre}?`)) return;
+    try {
+      if (user.uid) await setCRMUserActive(user.uid, activate, currentUser.nombre);
+      persistVendedores(vendedores.map(item => item.id === user.id ? { ...item, activo: activate, estadoAcceso: activate ? "Activo" : "Suspendido", estadoAccesoActualizadoEn: new Date().toISOString(), estadoAccesoActualizadoPor: currentUser.nombre } : item));
+      window.alert(`${user.nombre} quedó ${activate ? "activo" : "suspendido"}.`);
+    } catch (error) {
+      console.error("No se pudo cambiar el acceso:", error);
+      window.alert("No se pudo cambiar el acceso. El usuario debe tener un acceso de Firebase asociado.");
+    }
+  };
+  const removeVendedor = async (user) => {
+    if (String(user.email || "").toLowerCase() === "leyla.flores@gmail.com") return window.alert("El acceso principal de Leyla no puede eliminarse.");
+    if (!window.confirm(`¿Eliminar a ${user.nombre} del equipo? Su historial de clientes, ventas y seguimientos se conservará para auditoría, pero su acceso quedará suspendido.`)) return;
+    try {
+      if (user.uid) await setCRMUserActive(user.uid, false, currentUser.nombre);
+      persistVendedores(vendedores.filter(item => item.id !== user.id));
+      window.alert(`${user.nombre} fue eliminado del equipo y su acceso quedó suspendido.`);
+    } catch (error) {
+      console.error("No se pudo eliminar al colaborador:", error);
+      window.alert("No se pudo completar la eliminación. No se hizo ningún cambio para evitar dejar el acceso activo.");
+    }
+  };
 
   const selectedContact = selectedId ? contactos.find(c => c.id === selectedId) : null;
 
@@ -2183,7 +2243,7 @@ export default function CasaSolarCRM() {
             {tab === "facturacion" && <OperationsView mode="facturacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "planificacion" && <PlanningView cotizaciones={cotizaciones} contactos={contactos} />}
             {tab === "equipo" && currentUser.rol === "Jefe" && (
-              <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} />
+              <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} onResetPassword={resetUserPassword} onToggleAccess={toggleUserAccess} />
             )}
           </main>
         </div>
@@ -2321,6 +2381,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .badge-success { background:#EAF3DE; color:#27500A; }
 .badge-danger { background:#FCEBEB; color:#791F1F; }
 .badge-gray { background:#F1EFE8; color:#444441; }
+.badge-green { background:#DCFCE7; color:#166534; }
 
 /* Detail */
 .detail-head { display:flex; align-items:center; gap:14px; margin-bottom:14px; }
@@ -2425,6 +2486,9 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .planning-filters .role-toggle { margin:0; min-width:260px; }
 .installation-report-card { margin-top:18px; padding:16px; border:1px solid #B7E2C6; border-radius:12px; background:#F4FBF6; }
 .installation-report-card .btn-primary { margin-top:12px; }
+.password-field { position:relative; display:block; }
+.password-field .input { padding-right:42px; }
+.password-field .icon-btn { position:absolute; right:5px; top:5px; }
 .table-note { display:block; margin-top:4px; color:#8A8F98; font-size:11px; }
 .planning-filters .input { margin:0; max-width:220px; }
 .timeline-list { display:flex; flex-direction:column; gap:10px; }
