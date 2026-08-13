@@ -17,7 +17,7 @@ import {
   setSharedData,
   subscribeSharedData,
 } from "./firebase.js";
-import { downloadOrderPdf, downloadQuotePdf } from "./documents.js";
+import { downloadInstallationReportPdf, downloadOrderPdf, downloadQuotePdf } from "./documents.js";
 import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } from "./Campaigns.jsx";
 
 const DISCOUNT_AUTHORIZERS = {
@@ -205,6 +205,7 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "catalogo", label: "Catálogo", icon: Package },
   ];
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
+  if (["Jefe", "Jefe técnico", "Técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "informes-tecnicos", label: "Informes de instalación", icon: ClipboardList });
   const queuedPendingIds = new Set(descuentoSolicitudes.filter(request => request.estado === "Pendiente").map(request => request.id));
   const pendingDiscounts = queuedPendingIds.size + cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente" && !queuedPendingIds.has(quote.descuentoSolicitud.id)).length;
   const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
@@ -789,6 +790,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     areaIluminar: "", alturaInstalacionLuz: "", cantidadLuminarias: "", potenciaLuminaria: "", ubicacionPanelSolar: "", horasIluminacion: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
     estadoInstalacion: "Pendiente de programación", estadoBodega: "Pendiente",
+    informeInstalacion: { recibidoPor: "", detalle: "", evidencias: "", fechaHora: "", lugar: "", coordenadas: "", tecnicoNombre: "", tecnicoEmail: "", resultado: "" },
     garantiaSolicitada: "No", garantiaMotivo: "", garantiaDetalleFalla: "", garantiaFechaSolicitud: "",
     garantiaJefeTecnico: "Pendiente", garantiaJefeTecnicoPor: "", garantiaJefeTecnicoFecha: "",
     garantiaJefatura: "Pendiente", garantiaJefaturaPor: "", garantiaJefaturaFecha: "",
@@ -796,6 +798,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   };
   const [form, setForm] = useState(() => {
     const draft = readDraft(draftKey, defaultForm);
+    if (draft.tipoEvaluacion === "Visita presencial") draft.tipoEvaluacion = "Visita técnica presencial";
     if (!["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"].includes(draft.medidaTuberiaCaliente)) draft.medidaTuberiaCaliente = "CPVC 1/2 pulgada";
     if (!["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"].includes(draft.medidaTuberiaFria)) draft.medidaTuberiaFria = "PVC 1/2 pulgada";
     return draft;
@@ -812,7 +815,38 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   const isTechnician = currentUser?.rol === "Técnico";
   const isTechnicalArea = ["Técnico", "Jefe técnico"].includes(currentUser?.rol);
   const canAssignTechnician = currentUser?.rol === "Jefe técnico" || ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
-  const technicians = vendedores.filter(user => user.rol === "Técnico");
+  const technicians = vendedores.filter(user => ["Técnico", "Jefe técnico"].includes(user.rol));
+  const assignedToCurrentUser = String(form.tecnicoAsignadoEmail || "").toLowerCase() === String(currentUser?.email || "").toLowerCase();
+  const canCompleteInstallation = assignedToCurrentUser && ["Técnico", "Jefe técnico"].includes(currentUser?.rol);
+  const setReport = (key, value) => setForm(prev => ({ ...prev, informeInstalacion: { ...(prev.informeInstalacion || {}), [key]: value } }));
+  const registerInstallation = () => {
+    const report = form.informeInstalacion || {};
+    if (!String(report.recibidoPor || "").trim()) return window.alert("Escribe el nombre de la persona que recibió el equipo.");
+    if (!String(report.detalle || "").trim()) return window.alert("Escribe el informe del trabajo realizado.");
+    const finish = (coordinates = "", locationStatus = "Ubicación GPS no disponible") => {
+      const now = new Date().toISOString();
+      setForm(prev => ({
+        ...prev,
+        estadoInstalacion: "Instalada",
+        informeInstalacion: {
+          ...(prev.informeInstalacion || {}),
+          fechaHora: now,
+          lugar: coordinates ? `${prev.direccion || contacto?.direccion || "Dirección registrada"} · GPS confirmado` : (prev.direccion || contacto?.direccion || locationStatus),
+          coordenadas: coordinates,
+          tecnicoNombre: currentUser.nombre,
+          tecnicoEmail: currentUser.email || "",
+          resultado: "Instalación realizada",
+        },
+      }));
+      window.alert("Instalación registrada. Presiona Guardar registro para enviarla al historial y a los informes.");
+    };
+    if (!navigator.geolocation) return finish();
+    navigator.geolocation.getCurrentPosition(
+      position => finish(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`),
+      () => finish("", "Ubicación no autorizada por el dispositivo"),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
+    );
+  };
   const isWarrantyBoss = ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
   const warrantyReady = form.garantiaSolicitada === "Sí" && form.garantiaJefeTecnico === "Aceptada" && form.garantiaJefatura === "Aceptada";
   const warrantyDecision = (area, accepted) => {
@@ -845,14 +879,14 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           </div>
           <h4>Tipo de evaluación técnica</h4>
           <div className="evaluation-type-buttons">
-            {["Visita por llamada", "Visita por videollamada", "Visita presencial"].map(option => <button type="button" key={option} className={form.tipoEvaluacion === option ? "active" : ""} onClick={() => set("tipoEvaluacion", option)}>{form.tipoEvaluacion === option && <CheckCircle2 size={15} />}{option}</button>)}
+            {["Visita por llamada", "Visita por videollamada", "Visita técnica presencial"].map(option => <button type="button" key={option} className={form.tipoEvaluacion === option ? "active" : ""} onClick={() => set("tipoEvaluacion", option)}>{form.tipoEvaluacion === option && <CheckCircle2 size={15} />}{option}</button>)}
           </div>
-          <div className="evaluation-route-note"><Send size={15} /><span>{form.tipoEvaluacion === "Visita presencial" ? "Se enviará al Jefe técnico para asignar y programar al técnico." : "Se enviará directamente a Programación para coordinar la llamada con el cliente."}</span></div>
-          <h4>{form.tipoEvaluacion === "Visita presencial" ? "Asignación de visita presencial" : "Responsable y programación"}</h4>
+          <div className="evaluation-route-note"><Send size={15} /><span>{String(form.tipoEvaluacion).includes("presencial") ? "Se enviará al Jefe técnico para asignar y programar al técnico." : "Se enviará directamente a Programación para coordinar la llamada con el cliente."}</span></div>
+          <h4>{String(form.tipoEvaluacion).includes("presencial") ? "Asignación de visita presencial" : "Responsable y programación"}</h4>
           <div className="form-grid">
             {field("Departamento de la visita", "departamentoVisita")}
             <div><label className="field-label">Técnico asignado</label><select className="input" disabled={!canAssignTechnician} value={form.tecnicoAsignadoEmail} onChange={e => { const tech = technicians.find(item => item.email === e.target.value); setForm(prev => ({ ...prev, tecnicoAsignadoEmail: e.target.value, tecnicoAsignadoNombre: tech?.nombre || "" })); }}><option value="">Sin asignar</option>{technicians.map(tech => <option key={tech.id || tech.email} value={tech.email}>{tech.nombre}{tech.departamentosCobertura ? ` · ${tech.departamentosCobertura}` : ""}</option>)}</select></div>
-            {field(form.tipoEvaluacion === "Visita presencial" ? "Fecha de visita técnica" : "Fecha de llamada o videollamada", "fechaVisitaTecnica", "date")}
+            {field(String(form.tipoEvaluacion).includes("presencial") ? "Fecha de visita técnica" : "Fecha de llamada o videollamada", "fechaVisitaTecnica", "date")}
           </div>
           <h4>Programación e instalación</h4>
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
@@ -866,9 +900,21 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <h4>Estado de la orden</h4>
           <div className="form-grid order-status-grid">
             <div><label className="field-label">Pago del cliente</label><div className={`order-status-box ${form.estadoPago === "Cancelado" ? "done" : ""}`}>{form.estadoPago === "Cancelado" ? "Cancelado (pagado)" : form.estadoPago || "Pendiente"}</div></div>
-            <div><label className="field-label">Estado de instalación</label><select className="input" disabled={!['Jefe', 'Jefe técnico', 'Programación'].includes(currentUser?.rol)} value={form.estadoInstalacion || "Pendiente de programación"} onChange={e => set("estadoInstalacion", e.target.value)}><option>Pendiente de programación</option><option>Programada para instalación</option><option>Instalada</option><option>Cancelada</option></select></div>
+            <div><label className="field-label">Estado de instalación</label><select className="input" disabled={!['Jefe', 'Jefe técnico', 'Programación'].includes(currentUser?.rol) && !canCompleteInstallation} value={form.estadoInstalacion || "Pendiente de programación"} onChange={e => set("estadoInstalacion", e.target.value)}><option>Pendiente de programación</option><option>Programada para instalación</option><option>Instalada</option><option>Cancelada</option></select></div>
             <div><label className="field-label">Estado de Bodega</label><select className="input" disabled={!['Jefe', 'Bodega'].includes(currentUser?.rol)} value={form.estadoBodega || "Pendiente"} onChange={e => set("estadoBodega", e.target.value)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></div>
           </div>
+          {(canCompleteInstallation || form.informeInstalacion?.fechaHora) && <div className="installation-report-card">
+            <div className="section-title"><ClipboardList size={18}/><div><h4>Informe de instalación</h4><p>El cierre registra automáticamente la fecha, hora y ubicación del dispositivo.</p></div></div>
+            <div className="form-grid">
+              <div><label className="field-label">Persona que recibió el equipo</label><input className="input" disabled={!canCompleteInstallation} value={form.informeInstalacion?.recibidoPor || ""} onChange={e => setReport("recibidoPor", e.target.value)} /></div>
+              <div><label className="field-label">Lugar registrado</label><div className="order-status-box">{form.informeInstalacion?.lugar || form.direccion || "Se confirmará al cerrar"}</div></div>
+              <div><label className="field-label">Fecha y hora automática</label><div className="order-status-box">{form.informeInstalacion?.fechaHora ? new Date(form.informeInstalacion.fechaHora).toLocaleString("es-GT") : "Se registrará al cerrar"}</div></div>
+              <div><label className="field-label">Coordenadas</label><div className="order-status-box">{form.informeInstalacion?.coordenadas || "Pendientes"}</div></div>
+            </div>
+            <label className="field-label">Informe del trabajo realizado</label><textarea className="input" rows={4} disabled={!canCompleteInstallation} value={form.informeInstalacion?.detalle || ""} onChange={e => setReport("detalle", e.target.value)} placeholder="Trabajo realizado, pruebas, funcionamiento, materiales utilizados y observaciones" />
+            <label className="field-label">Evidencias del informe (enlaces compartidos)</label><textarea className="input" rows={2} disabled={!canCompleteInstallation} value={form.informeInstalacion?.evidencias || ""} onChange={e => setReport("evidencias", e.target.value)} placeholder="Pega un enlace por línea" />
+            {canCompleteInstallation && <button type="button" className="btn-primary" onClick={registerInstallation}><MapPin size={16}/> Registrar instalación realizada</button>}
+          </div>}
           {cotizacion.descuentoAutorizado && <div className="authorized-discount-order"><ShieldCheck size={18} /><div><strong>Descuento autorizado por {cotizacion.descuentoAutorizado.autorizadoPor}</strong><span>Total original: {fmtMoney(cotizacion.totalOriginal)} · Descuento: {fmtMoney(cotizacion.descuentoAutorizado.monto)} · Total autorizado: {fmtMoney(cotizacion.total)}</span></div></div>}
           <h4>Solicitud de garantía</h4>
           <div className="warranty-card">
@@ -1015,11 +1061,12 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
       {showOrder && <OrderFormModal cotizacion={{ ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida }} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onClose={() => setShowOrder(false)} onSave={(form) => {
           const quoteForOrder = { ...cotizacion, ordenNumero: cotizacion.ordenNumero || ordenSugerida };
           const assigned = Boolean(form.tecnicoAsignadoEmail);
-          const presencial = form.tipoEvaluacion === "Visita presencial";
+          const presencial = String(form.tipoEvaluacion).includes("presencial");
           const nextStage = presencial ? (assigned ? "Técnico" : "Jefe técnico") : "Programación";
           const action = presencial ? (assigned ? `Visita presencial asignada a ${form.tecnicoAsignadoNombre}` : "Visita presencial enviada al Jefe técnico") : `${form.tipoEvaluacion} enviada a Programación`;
           const history = [...(quoteForOrder.ordenFlujo?.historial || []), { accion: action, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
-          onUpdate({ ...quoteForOrder, ordenPedido: form, ordenFlujo: { ...(quoteForOrder.ordenFlujo || {}), etapa: nextStage, historial: history } });
+          if (form.fechaInstalacion) history.push({ accion: `Instalación programada para ${form.fechaInstalacion}; notificada a Programación, Bodega y Facturación`, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() });
+          onUpdate({ ...quoteForOrder, ordenPedido: form, ordenFlujo: { ...(quoteForOrder.ordenFlujo || {}), etapa: nextStage, programacionNotificada: Boolean(form.fechaInstalacion), bodegaNotificada: Boolean(form.fechaInstalacion), facturacionNotificada: Boolean(form.fechaInstalacion), historial: history } });
           setShowOrder(false);
         }} onGenerate={(form) => {
         try {
@@ -1505,14 +1552,17 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
     return null;
   };
   const saveRecord = (quote, form) => {
-    const presencial = form.tipoEvaluacion === "Visita presencial";
+    const presencial = String(form.tipoEvaluacion).includes("presencial");
     let stage = quote.ordenFlujo?.etapa || (presencial ? "Jefe técnico" : "Programación");
     if (role === "Jefe técnico") stage = presencial ? (form.tecnicoAsignadoEmail ? "Técnico" : "Jefe técnico") : "Programación";
+    if (form.informeInstalacion?.fechaHora) stage = "Completada";
     const detail = role === "Jefe técnico" && presencial
       ? (form.tecnicoAsignadoEmail ? `Jefe técnico asignó visita a ${form.tecnicoAsignadoNombre}` : "Jefe técnico dejó la visita sin técnico asignado")
       : "Registro actualizado";
     const history = [...(quote.ordenFlujo?.historial || []), { accion: detail, usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: new Date().toISOString() }];
-    onUpdate({ ...quote, ordenPedido: form, ordenFlujo: { ...(quote.ordenFlujo || {}), etapa: stage, historial: history } });
+    if (form.fechaInstalacion && form.fechaInstalacion !== quote.ordenPedido?.fechaInstalacion) history.push({ accion: `Fecha de instalación establecida o cambiada a ${form.fechaInstalacion}; Programación, Bodega y Facturación actualizadas`, usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: new Date().toISOString() });
+    if (form.informeInstalacion?.fechaHora && form.informeInstalacion.fechaHora !== quote.ordenPedido?.informeInstalacion?.fechaHora) history.push({ accion: `Instalación finalizada; recibió ${form.informeInstalacion.recibidoPor}`, usuario: currentUser.nombre, email: currentUser.email || "", rol: role, fecha: form.informeInstalacion.fechaHora });
+    onUpdate({ ...quote, ordenPedido: form, ordenFlujo: { ...(quote.ordenFlujo || {}), etapa: stage, programacionNotificada: Boolean(form.fechaInstalacion), bodegaNotificada: Boolean(form.fechaInstalacion), facturacionNotificada: Boolean(form.fechaInstalacion), historial: history } });
     setSelected(null);
   };
   const advance = (quote, form, config) => {
@@ -1534,6 +1584,23 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
       })}</div>}
     </div>
     {selectedQuote && <OrderFormModal cotizacion={selectedQuote} contacto={selectedContact} currentUser={currentUser} vendedores={vendedores} onClose={() => setSelected(null)} onSave={form => saveRecord(selectedQuote, form)} onGenerate={form => downloadOrderPdf(selectedQuote, selectedContact || selectedQuote.cliente || {}, LOGO_FULL, form)} {...(advanceConfig(selectedQuote) ? { onAdvance: form => advance(selectedQuote, form, advanceConfig(selectedQuote)), advanceLabel: advanceConfig(selectedQuote).label } : {})} />}
+  </div>;
+}
+
+function InstallationReportsView({ cotizaciones, contactos, currentUser }) {
+  const reports = cotizaciones.filter(quote => quote.ordenPedido?.informeInstalacion?.fechaHora).filter(quote => {
+    if (["Jefe", "Jefe técnico", "Programación"].includes(currentUser.rol)) return true;
+    return String(quote.ordenPedido.tecnicoAsignadoEmail || "").toLowerCase() === String(currentUser.email || "").toLowerCase();
+  }).sort((a, b) => String(b.ordenPedido.informeInstalacion.fechaHora).localeCompare(String(a.ordenPedido.informeInstalacion.fechaHora)));
+  return <div>
+    <div className="page-head"><h2>Informes de instalación</h2><p>Registro final de instalaciones realizadas, recepción del equipo, ubicación y responsable técnico.</p></div>
+    <div className="section-card">
+      {reports.length === 0 ? <div className="empty-state">Todavía no hay informes de instalación finalizados.</div> : <table className="table"><thead><tr><th>Fecha y hora</th><th>Orden</th><th>Cliente</th><th>Técnico</th><th>Recibió</th><th>Lugar</th><th>Informe</th></tr></thead><tbody>{reports.map(quote => {
+        const contact = contactos.find(item => item.id === quote.contactoId) || quote.cliente || {};
+        const report = quote.ordenPedido.informeInstalacion;
+        return <tr key={quote.id}><td>{new Date(report.fechaHora).toLocaleString("es-GT")}</td><td>{quote.ordenNumero || quote.numero.replace("CS-", "OP-")}</td><td>{contact.nombre || quote.contactoNombre}</td><td>{report.tecnicoNombre || quote.ordenPedido.tecnicoAsignadoNombre}</td><td>{report.recibidoPor}</td><td>{report.lugar}<small className="table-note">{report.coordenadas || "Sin GPS"}</small></td><td><button className="btn-ghost small" onClick={() => downloadInstallationReportPdf(quote, contact, LOGO_FULL, quote.ordenPedido)}><Download size={14}/> PDF</button></td></tr>;
+      })}</tbody></table>}
+    </div>
   </div>;
 }
 
@@ -1612,13 +1679,14 @@ function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUse
 function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }) {
   const allOrders = cotizaciones.filter(quote => quote.ordenPedido);
   const orders = mode === "programacion"
-    ? allOrders.filter(quote => ["Programación", "Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa))
+    ? allOrders.filter(quote => Boolean(quote.ordenPedido.fechaInstalacion) || ["Programación", "Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa))
     : mode === "bodega"
-      ? allOrders.filter(quote => ["Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa))
-      : allOrders.filter(quote => ["Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa));
+      ? allOrders.filter(quote => Boolean(quote.ordenPedido.fechaInstalacion))
+      : allOrders.filter(quote => Boolean(quote.ordenPedido.fechaInstalacion));
   const updateOrder = (quote, fields, action) => {
     const history = [...(quote.ordenFlujo?.historial || []), { accion: action, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
-    onUpdate({ ...quote, ordenPedido: { ...quote.ordenPedido, ...fields }, ordenFlujo: { ...(quote.ordenFlujo || {}), historial: history } });
+    const hasDate = Boolean(fields.fechaInstalacion ?? quote.ordenPedido.fechaInstalacion);
+    onUpdate({ ...quote, ordenPedido: { ...quote.ordenPedido, ...fields }, ordenFlujo: { ...(quote.ordenFlujo || {}), programacionNotificada: hasDate, bodegaNotificada: hasDate, facturacionNotificada: hasDate, historial: history } });
   };
   const contactName = quote => contactos.find(c => c.id === quote.contactoId)?.nombre || quote.contactoNombre || "Sin cliente";
   if (mode === "programacion") {
@@ -1978,6 +2046,7 @@ export default function CasaSolarCRM() {
             {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} />}
             {tab === "catalogo" && <CatalogoView />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "informes-tecnicos" && <InstallationReportsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} />}
             {tab === "descuentos" && <DiscountRequestsView cotizaciones={cotizaciones} contactos={contactos} solicitudes={descuentoSolicitudes} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "programacion" && <OperationsView mode="programacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "bodega" && <OperationsView mode="bodega" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
@@ -2224,6 +2293,9 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .advances-section .section-title p { font-size:12px; color:#667085; }
 .planning-filters { display:flex; align-items:center; gap:16px; }
 .planning-filters .role-toggle { margin:0; min-width:260px; }
+.installation-report-card { margin-top:18px; padding:16px; border:1px solid #B7E2C6; border-radius:12px; background:#F4FBF6; }
+.installation-report-card .btn-primary { margin-top:12px; }
+.table-note { display:block; margin-top:4px; color:#8A8F98; font-size:11px; }
 .planning-filters .input { margin:0; max-width:220px; }
 .timeline-list { display:flex; flex-direction:column; gap:10px; }
 .timeline-item { display:grid; grid-template-columns:100px 1fr; gap:14px; align-items:center; border-left:4px solid #E30613; background:#F7F5F0; border-radius:8px; padding:12px 14px; }

@@ -258,3 +258,39 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   doc.setFontSize(6); doc.text("Firma del cliente", 41, 326, { align: "center" }); doc.text("Firma del asesor", 107, 326, { align: "center" }); doc.text("Firma de Operaciones", 174, 326, { align: "center" });
   savePdf(doc, `${orderNumber}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
 }
+
+export function downloadInstallationReportPdf(quote, contact, logo, order = {}) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const client = contact || quote.cliente || {};
+  const report = order.informeInstalacion || {};
+  const orderNumber = quote.ordenNumero || quote.numero.replace("CS-", "OP-");
+  const red = [227, 6, 19];
+  const dark = [31, 36, 39];
+  doc.addImage(logo, "PNG", 15, 12, 65, 11);
+  doc.setTextColor(...dark); doc.setFont("helvetica", "bold"); doc.setFontSize(17);
+  doc.text("INFORME DE INSTALACIÓN", 195, 20, { align: "right" });
+  doc.setFontSize(9); doc.text(`Orden ${orderNumber}`, 195, 28, { align: "right" });
+  doc.setDrawColor(...red); doc.setLineWidth(1); doc.line(15, 35, 195, 35);
+  const rows = [
+    ["Cliente", client.nombre || quote.contactoNombre || "-"],
+    ["Equipo / servicio", (quote.items || []).filter(item => item.productoId !== "transporte_ruta").map(itemDescription).join("; ") || "-"],
+    ["Técnico responsable", report.tecnicoNombre || order.tecnicoAsignadoNombre || "-"],
+    ["Fecha y hora de finalización", report.fechaHora ? new Date(report.fechaHora).toLocaleString("es-GT") : "-"],
+    ["Persona que recibió", report.recibidoPor || "-"],
+    ["Lugar registrado", report.lugar || order.direccion || client.direccion || "-"],
+    ["Coordenadas", report.coordenadas || "No disponibles"],
+    ["Resultado", report.resultado || "Instalación realizada"],
+  ];
+  autoTable(doc, { startY: 43, margin: { left: 15, right: 15 }, body: rows, theme: "grid", styles: { fontSize: 9, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 50, fontStyle: "bold", fillColor: [245,245,245] } } });
+  let y = doc.lastAutoTable.finalY + 12;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text("INFORME DEL TÉCNICO", 15, y);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  doc.text(doc.splitTextToSize(report.detalle || "Sin observaciones adicionales.", 180), 15, y + 7);
+  y += 42;
+  doc.setFont("helvetica", "bold"); doc.text("EVIDENCIAS", 15, y);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+  doc.text(doc.splitTextToSize(report.evidencias || order.evidenciasFotograficas || "Sin enlaces registrados.", 180), 15, y + 7);
+  doc.setDrawColor(160); doc.line(25, 270, 85, 270); doc.line(125, 270, 185, 270);
+  doc.setFontSize(8); doc.text("Firma del técnico", 55, 276, { align: "center" }); doc.text("Firma de quien recibe", 155, 276, { align: "center" });
+  savePdf(doc, `Informe-${orderNumber}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+}

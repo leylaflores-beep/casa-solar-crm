@@ -62,3 +62,12 @@ Desde Contactos, las cuentas con rol Jefe pueden seleccionar clientes visibles y
 - Registro interno en Firebase de fecha, hora, canal, destinatario y usuario que realizó cada acción.
 
 WhatsApp y el programa de correo no permiten adjuntar automáticamente archivos desde una página web. Primero se descarga el PDF y luego se adjunta manualmente antes de enviar; el CRM conserva el registro interno de la acción.
+
+## Flujo operativo y técnico
+
+- Una **Visita técnica presencial** creada desde la orden se dirige primero a la bandeja del **Jefe técnico**.
+- El Jefe técnico puede asignarse a sí mismo o asignar/reasignar a otro técnico instalador.
+- Cuando una orden recibe una **fecha de instalación**, aparece simultáneamente en **Programación**, **Bodega**, **Facturación** y en el calendario. Si la fecha cambia, todas las áreas ven la fecha nueva.
+- El técnico asignado puede registrar la instalación realizada. El cierre exige el nombre de quien recibió el equipo y el informe del trabajo; guarda automáticamente fecha, hora, dirección y, con permiso del dispositivo, coordenadas GPS.
+- Los cierres aparecen en **Informes de instalación** y se pueden descargar como PDF.
+- Los técnicos comunes no pueden cambiar precios ni descargar la orden comercial. El Jefe técnico conserva permisos para modificar, guardar y descargar órdenes.
