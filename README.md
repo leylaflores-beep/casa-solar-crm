@@ -80,3 +80,5 @@ WhatsApp y el programa de correo no permiten adjuntar automáticamente archivos 
 - El formulario de seguimiento solo se cierra después de que Firebase confirma el guardado.
 - Firestore mantiene una copia local persistente para conservar información durante cortes temporales de Internet y sincronizarla al volver la conexión.
 - Los seguimientos no se eliminan al cerrar sesión, cerrar el navegador o actualizar la página.
+- Al abrir el CRM se revisan las órdenes existentes con instalación programada y se agrega al historial del contacto cualquier seguimiento de instalación que estuviera ausente, sin duplicarlo.
+- Las reasignaciones administrativas usan una transacción para conservar los seguimientos creados simultáneamente por otros usuarios.

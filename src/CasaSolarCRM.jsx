@@ -16,7 +16,7 @@ import {
   profileFromFirebaseUser,
   savePublicCampaign,
   setSharedData,
-  subscribeSharedData,
+  subscribeSharedData, updateSharedDataRecords,
 } from "./firebase.js";
 import { downloadInstallationReportPdf, downloadOrderPdf, downloadQuotePdf } from "./documents.js";
 import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } from "./Campaigns.jsx";
@@ -810,6 +810,8 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     motivoRevision: "", diagnosticoPreliminar: "", medicionesTecnicas: "", accesoTecho: "Sí", riesgosDetectados: "",
     areaIluminar: "", alturaInstalacionLuz: "", cantidadLuminarias: "", potenciaLuminaria: "", ubicacionPanelSolar: "", horasIluminacion: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
+    evaluacionTecnicaEstado: "Pendiente", evaluacionTecnicaInforme: "", evaluacionAprobadaCliente: "Pendiente",
+    evaluacionAprobadaPor: "", evaluacionAprobadaEn: "", ordenFinalGenerada: false, ordenFinalGeneradaEn: "",
     estadoInstalacion: "Pendiente de programación", estadoBodega: "Pendiente",
     informeInstalacion: { recibidoPor: "", detalle: "", evidencias: "", fechaHora: "", lugar: "", coordenadas: "", tecnicoNombre: "", tecnicoEmail: "", resultado: "" },
     garantiaSolicitada: "No", garantiaMotivo: "", garantiaDetalleFalla: "", garantiaFechaSolicitud: "",
@@ -832,7 +834,11 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     ...(key === "garantiaSolicitada" && value === "Sí" && !prev.garantiaFechaSolicitud ? { garantiaFechaSolicitud: todayISO() } : {}),
   }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
-  const generateOrder = () => { clearDraft(draftKey); onGenerate(form); };
+  const generateOrder = () => {
+    const finalForm = { ...form, ordenFinalGenerada: true, ordenFinalGeneradaEn: new Date().toISOString() };
+    clearDraft(draftKey);
+    onGenerate(finalForm);
+  };
   const saveOrder = () => { clearDraft(draftKey); onSave?.(form); };
   const isTechnician = currentUser?.rol === "Técnico";
   const isTechnicalArea = ["Técnico", "Jefe técnico"].includes(currentUser?.rol);
@@ -881,6 +887,18 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     setForm(prev => ({ ...prev, visitaTecnicaProgramada: true, visitaTecnicaProgramadaEn: new Date().toISOString() }));
     window.alert("Visita técnica presencial programada. Presiona Guardar registro para confirmar los cambios.");
   };
+  const technicalEvaluationReady = (form.evaluacionTecnicaEstado === "Realizada" && form.evaluacionAprobadaCliente === "Aprobada")
+    || Boolean(form.ordenFinalGenerada || form.fechaInstalacion || form.informeInstalacion?.fechaHora);
+  const roleRequiresApprovedEvaluation = role => role === "Técnico";
+  const confirmTechnicalEvaluation = () => {
+    if (!String(form.evaluacionTecnicaInforme || "").trim()) return window.alert("Escribe el resultado de la evaluación técnica.");
+    setForm(prev => ({ ...prev, evaluacionTecnicaEstado: "Realizada", evaluacionTecnicaRealizadaEn: new Date().toISOString(), evaluacionTecnicaRealizadaPor: currentUser.nombre }));
+  };
+  const approveEvaluation = () => {
+    if (form.evaluacionTecnicaEstado !== "Realizada") return window.alert("Primero el técnico debe marcar la evaluación como realizada.");
+    if (!String(form.evaluacionAprobadaPor || "").trim()) return window.alert("Escribe el nombre del cliente o responsable que aprobó la evaluación.");
+    setForm(prev => ({ ...prev, evaluacionAprobadaCliente: "Aprobada", evaluacionAprobadaEn: new Date().toISOString() }));
+  };
   const field = (label, key, type = "text") => (
     <div><label className="field-label">{label}</label><input className="input" type={type} value={form[key]} onChange={e => set(key, e.target.value)} /></div>
   );
@@ -917,6 +935,21 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
             {String(form.tipoEvaluacion).includes("presencial") && field("Hora de visita técnica", "horaVisitaTecnica", "time")}
           </div>
           {String(form.tipoEvaluacion).includes("presencial") && <div className="evaluation-route-note"><Clock size={15}/><span>{form.visitaTecnicaProgramada ? `Programada para ${form.fechaVisitaTecnica} a las ${form.horaVisitaTecnica}` : "Selecciona fecha y hora, luego confirma la programación."}</span><button type="button" className="btn-primary small" onClick={scheduleTechnicalVisit}><Clock size={15}/> Programar fecha y hora</button></div>}
+          <div className="installation-report-card">
+            <div className="section-title"><ClipboardList size={18}/><div><h4>Cierre de la evaluación técnica</h4><p>La Orden de Pedido final para instalación se habilita cuando la evaluación está realizada y aprobada por el cliente.</p></div></div>
+            <div className="form-grid">
+              <div><label className="field-label">Estado de evaluación</label><div className={`order-status-box ${form.evaluacionTecnicaEstado === "Realizada" ? "done" : ""}`}>{form.evaluacionTecnicaEstado || "Pendiente"}</div></div>
+              <div><label className="field-label">Aprobación del cliente</label><div className={`order-status-box ${form.evaluacionAprobadaCliente === "Aprobada" ? "done" : ""}`}>{form.evaluacionAprobadaCliente || "Pendiente"}</div></div>
+            </div>
+            <label className="field-label">Resultado de la evaluación técnica</label><textarea className="input" rows={3} value={form.evaluacionTecnicaInforme || ""} onChange={e => set("evaluacionTecnicaInforme", e.target.value)} placeholder="Condiciones encontradas, equipo recomendado, materiales y observaciones" />
+            {isTechnicalArea && form.evaluacionTecnicaEstado !== "Realizada" && <button type="button" className="btn-primary" onClick={confirmTechnicalEvaluation}><CheckCircle2 size={16}/> Marcar evaluación como realizada</button>}
+            <div className="form-grid">
+              <div><label className="field-label">Nombre de quien aprueba</label><input className="input" value={form.evaluacionAprobadaPor || ""} onChange={e => set("evaluacionAprobadaPor", e.target.value)} placeholder="Cliente o responsable" /></div>
+              <div><label className="field-label">Fecha de aprobación</label><div className="order-status-box">{form.evaluacionAprobadaEn ? new Date(form.evaluacionAprobadaEn).toLocaleString("es-GT") : "Pendiente"}</div></div>
+            </div>
+            {form.evaluacionAprobadaCliente !== "Aprobada" && <button type="button" className="btn-primary" onClick={approveEvaluation}><ShieldCheck size={16}/> Registrar aprobación del cliente</button>}
+            <div className={`warranty-result ${technicalEvaluationReady ? "ready" : "blocked"}`}>{technicalEvaluationReady ? <><CheckCircle2 size={18}/> LISTA · Ya puede generarse la Orden de Pedido final</> : <><Clock size={18}/> PENDIENTE · Falta realizar o aprobar la evaluación</>}</div>
+          </div>
           <h4>Programación e instalación</h4>
           <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("DPI / CUI", "dpi")}{field("NIT", "nit")}</div>
           <h4>Datos técnicos · {form.tipoOrden || "Calentadores"}</h4>
@@ -968,7 +1001,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
           {String(form.evidenciasFotograficas || "").split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).length > 0 && <div className="photo-links">{String(form.evidenciasFotograficas).split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).map((link, index) => <a key={`${link}-${index}`} href={link.trim()} target="_blank" rel="noreferrer"><Camera size={14} /> Abrir evidencia {index + 1}</a>)}</div>}
         </div>
-        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnician && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnician && <button className="btn-primary" disabled={!technicalEvaluationReady} onClick={generateOrder}><Download size={16} /> Generar OP final</button>}{onAdvance && <button className="btn-primary" disabled={roleRequiresApprovedEvaluation(currentUser?.rol) && !technicalEvaluationReady} onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
       </div>
     </div>
   );
@@ -1574,7 +1607,7 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
   const selectedContact = selectedQuote ? contactos.find(item => item.id === selectedQuote.contactoId) : null;
   const advanceConfig = quote => {
     const stage = quote.ordenFlujo?.etapa;
-    if (role === "Técnico" && stage === "Técnico") return { label: "Enviar a Programación", stage: "Programación", action: "Evaluación técnica enviada a Programación" };
+    if (role === "Técnico" && stage === "Técnico") return { label: "Enviar evaluación aprobada", stage: "Programación", action: "Evaluación realizada y aprobada por el cliente; lista para Orden de Pedido final" };
     if (role === "Programación" && stage === "Programación") return { label: "Enviar a Bodega y Facturación", stage: "Bodega y Facturación", action: "Programación enviada a Bodega y Facturación" };
     if (role === "Bodega" && stage === "Bodega y Facturación" && !quote.ordenFlujo?.bodegaCompletado) return { label: "Marcar revisión de Bodega", stage, action: "Revisión de Bodega completada", flag: "bodegaCompletado" };
     if (role === "Facturación" && stage === "Bodega y Facturación" && !quote.ordenFlujo?.facturacionCompletada) return { label: "Marcar Facturación", stage, action: "Facturación completada", flag: "facturacionCompletada" };
@@ -1608,11 +1641,11 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
         const contact = contactos.find(item => item.id === quote.contactoId);
         return <button className="technical-order-row" key={quote.id} onClick={() => setSelected(quote.id)}>
           <div><strong>{quote.ordenNumero || quote.numero.replace("CS-", "OP-")}</strong><span>{contact?.nombre || quote.contactoNombre} · {quote.ordenPedido.tipoEvaluacion || "Evaluación por definir"} · {quote.ordenPedido.departamentoVisita || contact?.departamento || "Sin departamento"}</span></div>
-          <div><span className="badge badge-blue">{quote.ordenFlujo?.etapa || "Pendiente"}</span><small>{quote.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"} · {quote.ordenPedido.estadoPago === "Cancelado" ? "Pago cancelado" : quote.ordenPedido.estadoInstalacion || "Sin programar"} · {quote.ordenPedido.estadoBodega || "Bodega pendiente"}</small></div>
+          <div><span className="badge badge-blue">{quote.ordenFlujo?.etapa || "Pendiente"}</span><small>Evaluación: {quote.ordenPedido.evaluacionTecnicaEstado || "Pendiente"} · Cliente: {quote.ordenPedido.evaluacionAprobadaCliente || "Pendiente"} · {quote.ordenPedido.ordenFinalGenerada ? "OP final generada" : "OP final pendiente"}</small><small>{quote.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"} · {quote.ordenPedido.estadoPago === "Cancelado" ? "Pago cancelado" : quote.ordenPedido.estadoInstalacion || "Sin programar"} · {quote.ordenPedido.estadoBodega || "Bodega pendiente"}</small></div>
         </button>;
       })}</div>}
     </div>
-    {selectedQuote && <OrderFormModal cotizacion={selectedQuote} contacto={selectedContact} currentUser={currentUser} vendedores={vendedores} onClose={() => setSelected(null)} onSave={form => saveRecord(selectedQuote, form)} onGenerate={form => downloadOrderPdf(selectedQuote, selectedContact || selectedQuote.cliente || {}, LOGO_FULL, form)} {...(advanceConfig(selectedQuote) ? { onAdvance: form => advance(selectedQuote, form, advanceConfig(selectedQuote)), advanceLabel: advanceConfig(selectedQuote).label } : {})} />}
+    {selectedQuote && <OrderFormModal cotizacion={selectedQuote} contacto={selectedContact} currentUser={currentUser} vendedores={vendedores} onClose={() => setSelected(null)} onSave={form => saveRecord(selectedQuote, form)} onGenerate={form => { downloadOrderPdf(selectedQuote, selectedContact || selectedQuote.cliente || {}, LOGO_FULL, form); saveRecord(selectedQuote, form); }} {...(advanceConfig(selectedQuote) ? { onAdvance: form => advance(selectedQuote, form, advanceConfig(selectedQuote)), advanceLabel: advanceConfig(selectedQuote).label } : {})} />}
   </div>;
 }
 
@@ -1857,6 +1890,22 @@ export default function CasaSolarCRM() {
         return { ...item, numero: `CS-${year}-${String(counters[year]).padStart(4, "0")}` };
       });
       const normalizedDiscounts = Array.isArray(discountQueue) ? [...discountQueue] : [];
+      const loadedFollowups = Array.isArray(s) ? [...s] : [];
+      const installationFollowups = [];
+      normalizedQuotes.forEach(quote => {
+        const installationDate = quote.ordenPedido?.fechaInstalacion;
+        if (!quote.contactoId || !installationDate) return;
+        const eventKey = `instalacion-programada:${quote.id}:${installationDate}`;
+        if (loadedFollowups.some(item => item.eventoClave === eventKey)) return;
+        const contact = (c || []).find(item => item.id === quote.contactoId);
+        installationFollowups.push({
+          id: uid(), contactoId: quote.contactoId, contactoNombre: contact?.nombre || quote.contactoNombre || "Cliente",
+          tipo: "Instalación programada", notas: `Instalación programada para ${installationDate}${quote.ordenPedido.horario ? ` · ${quote.ordenPedido.horario}` : ""}. Orden ${quote.ordenNumero || quote.numero}.`,
+          proximoSeguimiento: installationDate, vendedor: quote.vendedor || contact?.vendedor || "Sistema",
+          fecha: String(quote.ordenPedido.visitaTecnicaProgramadaEn || quote.fecha || todayISO()).slice(0, 10), fechaHora: quote.ordenPedido.visitaTecnicaProgramadaEn || new Date().toISOString(),
+          creadoEn: new Date().toISOString(), creadoPorEmail: "", origen: "Sistema", cotizacionId: quote.id, eventoClave: eventKey,
+        });
+      });
       let repairedDiscounts = false;
       normalizedQuotes.forEach(quote => {
         const request = quote.descuentoSolicitud;
@@ -1869,7 +1918,14 @@ export default function CasaSolarCRM() {
       setContactos(c || []);
       setCotizaciones(normalizedQuotes);
       setDescuentoSolicitudes(normalizedDiscounts);
-      setSeguimientos(s || []);
+      setSeguimientos([...installationFollowups, ...loadedFollowups]);
+      if (installationFollowups.length) {
+        try {
+          await Promise.all(installationFollowups.map(record => appendSharedData("casasolar:seguimientos", record)));
+        } catch (error) {
+          console.error("No se pudo completar la conciliación de instalaciones y seguimientos:", error);
+        }
+      }
       const loadedCampaigns = camp?.length ? camp : [DEFAULT_CAMPAIGN];
       setCampaigns(loadedCampaigns);
       if (!camp?.length) {
@@ -1951,11 +2007,13 @@ export default function CasaSolarCRM() {
     const cliente = { id: updated.id, nombre: updated.nombre || "", telefono: updated.telefono || "", email: updated.email || "", dpi: updated.dpi || "", nit: updated.nit || "C/F", direccion: updated.direccion || "", municipio: updated.municipio || "", departamento: updated.departamento || "" };
     persistCotizaciones(cotizaciones.map(q => q.contactoId === updated.id ? { ...q, contactoNombre: updated.nombre, cliente } : q));
   };
-  const assignContactos = (ids, seller) => {
+  const assignContactos = async (ids, seller) => {
     const selectedIds = new Set(ids);
     persistContactos(contactos.map(item => selectedIds.has(item.id) ? { ...item, vendedor: seller } : item));
     persistCotizaciones(cotizaciones.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
-    persistSeguimientos(seguimientos.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
+    const followupIds = seguimientos.filter(item => selectedIds.has(item.contactoId)).map(item => item.id);
+    setSeguimientos(current => current.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
+    if (followupIds.length) await updateSharedDataRecords("casasolar:seguimientos", followupIds, { vendedor: seller });
     window.alert(`${ids.length} cliente${ids.length === 1 ? "" : "s"} asignado${ids.length === 1 ? "" : "s"} a ${seller}.`);
   };
   const addCotizacion = (data) => {
@@ -1978,6 +2036,7 @@ export default function CasaSolarCRM() {
   const updateCotizacion = async (updated) => {
     const shared = await storageGet("casasolar:cotizaciones", true);
     const source = Array.isArray(shared) ? shared : cotizaciones;
+    const previousQuote = source.find(item => item.id === updated.id);
     const next = source.map(c => {
       if (c.id !== updated.id) return c;
       const discount = updated.descuentoAutorizado;
@@ -1996,6 +2055,25 @@ export default function CasaSolarCRM() {
     });
     setCotizaciones(next);
     await storageSet("casasolar:cotizaciones", next, true);
+    const previousInstallationDate = previousQuote?.ordenPedido?.fechaInstalacion || "";
+    const installationDate = updated.ordenPedido?.fechaInstalacion || "";
+    if (installationDate && installationDate !== previousInstallationDate && updated.contactoId) {
+      const contact = contactos.find(item => item.id === updated.contactoId);
+      const eventKey = `instalacion-programada:${updated.id}:${installationDate}`;
+      const latestFollowups = await storageGet("casasolar:seguimientos", true);
+      if (!Array.isArray(latestFollowups) || !latestFollowups.some(item => item.eventoClave === eventKey)) {
+        const record = {
+          id: uid(), contactoId: updated.contactoId, contactoNombre: contact?.nombre || updated.contactoNombre || "Cliente",
+          tipo: previousInstallationDate ? "Instalación reprogramada" : "Instalación programada",
+          notas: `${previousInstallationDate ? `Instalación cambiada de ${previousInstallationDate} a` : "Instalación programada para"} ${installationDate}${updated.ordenPedido?.horario ? ` · ${updated.ordenPedido.horario}` : ""}. Orden ${updated.ordenNumero || updated.numero}.`,
+          proximoSeguimiento: installationDate, vendedor: updated.vendedor || contact?.vendedor || currentUser.nombre,
+          fecha: todayISO(), fechaHora: new Date().toISOString(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "",
+          origen: "Sistema", cotizacionId: updated.id, eventoClave: eventKey,
+        };
+        setSeguimientos(current => current.some(item => item.eventoClave === eventKey) ? current : [record, ...current]);
+        await appendSharedData("casasolar:seguimientos", record);
+      }
+    }
     if (updated.descuentoSolicitud?.id) {
       const latestQueue = await storageGet("casasolar:descuentos", true);
       const sourceQueue = Array.isArray(latestQueue) ? latestQueue : descuentoSolicitudes;
@@ -2031,7 +2109,7 @@ export default function CasaSolarCRM() {
       persistVendedores([...vendedores, { id: uid(), ...profile }]);
     }
   };
-  const updateVendedor = (updated) => {
+  const updateVendedor = async (updated) => {
     const previous = vendedores.find(v => v.id === updated.id);
     const oldName = previous?.nombre || "";
     const newName = String(updated.nombre || "").trim();
@@ -2044,7 +2122,9 @@ export default function CasaSolarCRM() {
     if (oldName && oldName !== newName) {
       persistContactos(contactos.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
       persistCotizaciones(cotizaciones.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
-      persistSeguimientos(seguimientos.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
+      const followupIds = seguimientos.filter(item => item.vendedor === oldName).map(item => item.id);
+      setSeguimientos(current => current.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
+      if (followupIds.length) await updateSharedDataRecords("casasolar:seguimientos", followupIds, { vendedor: newName });
       persistCampaigns(campaigns.map(campaign => ({
         ...campaign,
         sends: (campaign.sends || []).map(send => send.vendedor === oldName ? { ...send, vendedor: newName } : send),

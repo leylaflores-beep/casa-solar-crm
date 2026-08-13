@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
-import { arrayUnion, doc, getDoc, initializeFirestore, onSnapshot, persistentLocalCache, persistentMultipleTabManager, setDoc, updateDoc } from "firebase/firestore";
+import { arrayUnion, doc, getDoc, initializeFirestore, onSnapshot, persistentLocalCache, persistentMultipleTabManager, runTransaction, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCkDZgfSyIM_KwfA68w5cRN9jj-S4lSeJU",
@@ -98,6 +98,21 @@ export async function appendSharedData(key, value) {
     value: arrayUnion(value),
     updatedAt: new Date().toISOString(),
   }, { merge: true });
+}
+
+// Actualiza registros existentes dentro de una transacción para no reemplazar
+// seguimientos agregados por otro usuario mientras la pantalla estaba abierta.
+export async function updateSharedDataRecords(key, ids, changes) {
+  const target = doc(db, "crm_data", documentName(key));
+  const selected = new Set(ids);
+  await runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(target);
+    const current = snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : [];
+    transaction.set(target, {
+      value: current.map(item => selected.has(item.id) ? { ...item, ...changes } : item),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  });
 }
 
 export function subscribeSharedData(key, callback, onError) {
