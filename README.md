@@ -1,5 +1,13 @@
 # Casa Solar CRM
 
+## Publicación oficial
+
+El CRM se publica únicamente en Firebase Hosting mediante `.github/workflows/firebase-hosting.yml`.
+La dirección oficial es `https://crm-casa-solar.web.app/`.
+
+Para actualizar desde GitHub, sube el contenido completo del paquete conservando las carpetas
+`.github`, `public` y `src`. El archivo principal debe llamarse exactamente `index.html`.
+
 Proyecto web creado con React y Vite.
 
 ## Ejecutar en desarrollo
