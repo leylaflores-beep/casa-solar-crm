@@ -209,10 +209,10 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
   const pendingDiscounts = queuedPendingIds.size + cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente" && !queuedPendingIds.has(quote.descuentoSolicitud.id)).length;
   const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
   if (canReviewDiscounts) items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
-  if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
+  if (["Jefe", "Jefe técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
   if (["Jefe", "Bodega"].includes(currentUser.rol)) items.push({ id: "bodega", label: "Bodega", icon: Package });
   if (["Jefe", "Facturación"].includes(currentUser.rol)) items.push({ id: "facturacion", label: "Facturación", icon: FileText });
-  if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "planificacion", label: "Planificación", icon: CalendarDays });
+  if (["Jefe", "Jefe técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "planificacion", label: "Calendario completo", icon: CalendarDays });
   if (currentUser.rol === "Jefe") items.push({ id: "equipo", label: "Equipo", icon: Settings });
 
   return (
@@ -893,7 +893,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
           {String(form.evidenciasFotograficas || "").split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).length > 0 && <div className="photo-links">{String(form.evidenciasFotograficas).split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).map((link, index) => <a key={`${link}-${index}`} href={link.trim()} target="_blank" rel="noreferrer"><Camera size={14} /> Abrir evidencia {index + 1}</a>)}</div>}
         </div>
-        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnicalArea && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnician && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden PDF</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
       </div>
     </div>
   );
@@ -1523,7 +1523,7 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
     setSelected(null);
   };
   return <div>
-    <div className="page-head"><h2>Órdenes técnicas</h2><p>Llamadas, videollamadas, visitas presenciales y traslado de información entre las áreas.</p></div>
+    <div className="page-head"><h2>Órdenes de pedido y asignación técnica</h2><p>Abre cada orden para modificarla, guardarla, descargarla en PDF y asignar, cambiar o retirar al técnico instalador.</p></div>
     <div className="section-card">
       {visible.length === 0 ? <div className="empty-state">No tienes órdenes asignadas en esta etapa.</div> : <div className="mini-list">{visible.map(quote => {
         const contact = contactos.find(item => item.id === quote.contactoId);
@@ -1533,7 +1533,7 @@ function TechnicalOrdersView({ cotizaciones, contactos, vendedores, currentUser,
         </button>;
       })}</div>}
     </div>
-    {selectedQuote && <OrderFormModal cotizacion={selectedQuote} contacto={selectedContact} currentUser={currentUser} vendedores={vendedores} onClose={() => setSelected(null)} onSave={form => saveRecord(selectedQuote, form)} {...(advanceConfig(selectedQuote) ? { onAdvance: form => advance(selectedQuote, form, advanceConfig(selectedQuote)), advanceLabel: advanceConfig(selectedQuote).label } : {})} />}
+    {selectedQuote && <OrderFormModal cotizacion={selectedQuote} contacto={selectedContact} currentUser={currentUser} vendedores={vendedores} onClose={() => setSelected(null)} onSave={form => saveRecord(selectedQuote, form)} onGenerate={form => downloadOrderPdf(selectedQuote, selectedContact || selectedQuote.cliente || {}, LOGO_FULL, form)} {...(advanceConfig(selectedQuote) ? { onAdvance: form => advance(selectedQuote, form, advanceConfig(selectedQuote)), advanceLabel: advanceConfig(selectedQuote).label } : {})} />}
   </div>;
 }
 
