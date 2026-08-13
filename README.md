@@ -71,3 +71,11 @@ WhatsApp y el programa de correo no permiten adjuntar automáticamente archivos 
 - El técnico asignado puede registrar la instalación realizada. El cierre exige el nombre de quien recibió el equipo y el informe del trabajo; guarda automáticamente fecha, hora, dirección y, con permiso del dispositivo, coordenadas GPS.
 - Los cierres aparecen en **Informes de instalación** y se pueden descargar como PDF.
 - Los técnicos comunes no pueden cambiar precios ni descargar la orden comercial. El Jefe técnico conserva permisos para modificar, guardar y descargar órdenes.
+
+## Persistencia de la información
+
+- Contactos, cotizaciones, seguimientos, campañas, órdenes e informes se guardan en Firestore y se sincronizan en tiempo real entre usuarios.
+- Cada seguimiento nuevo se agrega individualmente para evitar que una sesión antigua reemplace el historial completo.
+- El formulario de seguimiento solo se cierra después de que Firebase confirma el guardado.
+- Firestore mantiene una copia local persistente para conservar información durante cortes temporales de Internet y sincronizarla al volver la conexión.
+- Los seguimientos no se eliminan al cerrar sesión, cerrar el navegador o actualizar la página.

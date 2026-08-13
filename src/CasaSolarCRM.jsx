@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {
   getSharedData,
+  appendSharedData,
   createCRMUser,
   loginWithEmail,
   logoutFirebase,
@@ -135,6 +136,7 @@ async function storageSet(key, value, shared) {
     else window.localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {
     console.error("No se pudo guardar la información:", e);
+    throw e;
   }
 }
 
@@ -734,6 +736,16 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
   const [tipo, setTipo] = useState("Llamada");
   const [notas, setNotas] = useState("");
   const [proximo, setProximo] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const save = async () => {
+    if (!contactoId || !notas.trim() || guardando) return;
+    setGuardando(true);
+    try {
+      await onSave({ contactoId, tipo, notas: notas.trim(), proximoSeguimiento: proximo, vendedor, fecha: todayISO(), fechaHora: new Date().toISOString() });
+    } finally {
+      setGuardando(false);
+    }
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -758,9 +770,8 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn-primary" disabled={!contactoId || !notas.trim()}
-            onClick={() => onSave({ contactoId, tipo, notas, proximoSeguimiento: proximo, vendedor, fecha: todayISO(), fechaHora: new Date().toISOString() })}>
-            Guardar seguimiento
+          <button className="btn-primary" disabled={!contactoId || !notas.trim() || guardando} onClick={save}>
+            {guardando ? "Guardando en Firebase…" : "Guardar seguimiento"}
           </button>
         </div>
       </div>
@@ -1285,7 +1296,7 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
       )}
       {modal === "seguimiento" && (
         <SeguimientoModal contactos={[contacto]} initialContactId={contacto.id} vendedor={contacto.vendedor}
-          onClose={() => setModal(null)} onSave={(data) => { onAddSeguimiento(data); setModal(null); }} />
+          onClose={() => setModal(null)} onSave={async (data) => { await onAddSeguimiento(data); setModal(null); }} />
       )}
     </div>
   );
@@ -1433,7 +1444,7 @@ function SeguimientosView({ seguimientos, contactos, currentUser, onAdd }) {
       )}
       {newContactId && (
         <SeguimientoModal contactos={contactos} initialContactId={newContactId === "__nuevo__" ? "" : newContactId} vendedor={currentUser.nombre}
-          onClose={() => setNewContactId("")} onSave={(data) => { onAdd(data); setNewContactId(""); }} />
+          onClose={() => setNewContactId("")} onSave={async (data) => { await onAdd(data); setNewContactId(""); }} />
       )}
     </div>
   );
@@ -1862,13 +1873,25 @@ export default function CasaSolarCRM() {
 
   useEffect(() => {
     if (!currentUser) return undefined;
+    const unsubscribeSellers = subscribeSharedData("casasolar:vendedores", value => {
+      if (Array.isArray(value)) setVendedores(value);
+    }, error => console.error("No se pudo actualizar el equipo en tiempo real:", error));
+    const unsubscribeContacts = subscribeSharedData("casasolar:contactos", value => {
+      if (Array.isArray(value)) setContactos(value);
+    }, error => console.error("No se pudieron actualizar los contactos en tiempo real:", error));
     const unsubscribeQuotes = subscribeSharedData("casasolar:cotizaciones", value => {
       if (Array.isArray(value)) setCotizaciones(value);
     }, error => console.error("No se pudieron actualizar las solicitudes en tiempo real:", error));
+    const unsubscribeFollowups = subscribeSharedData("casasolar:seguimientos", value => {
+      if (Array.isArray(value)) setSeguimientos(value);
+    }, error => console.error("No se pudieron actualizar los seguimientos en tiempo real:", error));
+    const unsubscribeCampaigns = subscribeSharedData("casasolar:campaigns", value => {
+      if (Array.isArray(value)) setCampaigns(value);
+    }, error => console.error("No se pudieron actualizar las campañas en tiempo real:", error));
     const unsubscribeDiscounts = subscribeSharedData("casasolar:descuentos", value => {
       if (Array.isArray(value)) setDescuentoSolicitudes(value);
     }, error => console.error("No se pudo actualizar la bandeja de descuentos:", error));
-    return () => { unsubscribeQuotes(); unsubscribeDiscounts(); };
+    return () => { unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
@@ -1967,9 +1990,18 @@ export default function CasaSolarCRM() {
     }
     return next.find(c => c.id === updated.id);
   };
-  const addSeguimiento = (data) => {
+  const addSeguimiento = async (data) => {
     const contacto = contactos.find(c => c.id === data.contactoId);
-    persistSeguimientos([{ ...data, id: uid(), contactoNombre: contacto?.nombre }, ...seguimientos]);
+    const record = { ...data, id: uid(), contactoNombre: contacto?.nombre, creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
+    setSeguimientos(current => current.some(item => item.id === record.id) ? current : [record, ...current]);
+    try {
+      await appendSharedData("casasolar:seguimientos", record);
+    } catch (error) {
+      setSeguimientos(current => current.filter(item => item.id !== record.id));
+      console.error("No se pudo guardar el seguimiento:", error);
+      window.alert("No se pudo guardar el seguimiento en Firebase. Revisa la conexión e inténtalo nuevamente.");
+      throw error;
+    }
   };
   const addVendedor = (nombre, telefono) => persistVendedores([...vendedores, { id: uid(), nombre, telefono }]);
   const createUserAccess = async ({ nombre, email, password, rol, telefono, departamentosCobertura }) => {

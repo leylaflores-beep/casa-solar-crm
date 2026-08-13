@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
-import { doc, getDoc, getFirestore, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
+import { arrayUnion, doc, getDoc, initializeFirestore, onSnapshot, persistentLocalCache, persistentMultipleTabManager, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCkDZgfSyIM_KwfA68w5cRN9jj-S4lSeJU",
@@ -13,7 +13,9 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 const auth = getAuth(app);
 
 const ADMINISTRADORAS = {
@@ -89,6 +91,13 @@ export async function setSharedData(key, value) {
     value,
     updatedAt: new Date().toISOString(),
   });
+}
+
+export async function appendSharedData(key, value) {
+  await setDoc(doc(db, "crm_data", documentName(key)), {
+    value: arrayUnion(value),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 export function subscribeSharedData(key, callback, onError) {
