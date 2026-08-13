@@ -213,6 +213,10 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
   if (["Jefe", "Bodega"].includes(currentUser.rol)) items.push({ id: "bodega", label: "Bodega", icon: Package });
   if (["Jefe", "Facturación"].includes(currentUser.rol)) items.push({ id: "facturacion", label: "Facturación", icon: FileText });
   if (["Jefe", "Programación"].includes(currentUser.rol)) items.push({ id: "planificacion", label: "Planificación", icon: CalendarDays });
+  if (currentUser.rol === "Jefe") items.push({ id: "ordenes-jefe", label: "Órdenes de pedido", icon: ShoppingCart });
+  if (currentUser.rol === "Jefe") items.push({ id: "area-tecnica", label: "Área técnica", icon: Wrench });
+  if (currentUser.rol === "Jefe") items.push({ id: "calendario-jefe", label: "Calendario", icon: CalendarDays });
+  if (currentUser.rol === "Jefe") items.push({ id: "tecnicos", label: "Técnicos", icon: HardHat });
   if (currentUser.rol === "Jefe") items.push({ id: "equipo", label: "Equipo", icon: Settings });
 
   return (
@@ -1631,6 +1635,485 @@ function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }
   return <div><div className="page-head"><h2>Facturación</h2><p>Facturas que deben generarse para los clientes.</p></div><div className="section-card"><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>NIT</th><th>Total</th><th>Pago</th><th>Factura</th><th>Número</th></tr></thead><tbody>{orders.map(q => { const c=contactos.find(x=>x.id===q.contactoId)||q.cliente||{}; return <tr key={q.id}><td>{q.ordenNumero||q.numero.replace("CS-","OP-")}</td><td>{c.nombre||q.contactoNombre}</td><td>{c.nit||q.ordenPedido.nit||"C/F"}</td><td>{fmtMoney(q.total)}</td><td>{q.ordenPedido.estadoPago||"Pendiente"}</td><td><select className="input compact" value={q.ordenPedido.estadoFactura||"Pendiente"} onChange={e=>updateOrder(q,{estadoFactura:e.target.value},`Facturación: ${e.target.value}`)}><option>Pendiente</option><option>En proceso</option><option>Generada</option><option>Enviada al cliente</option></select></td><td><input className="input compact" value={q.ordenPedido.numeroFactura||""} onChange={e=>updateOrder(q,{numeroFactura:e.target.value},"Número de factura actualizado")} placeholder="Serie / número" /></td></tr>;})}</tbody></table></div></div>;
 }
 
+
+// ─── VISTA: Órdenes de pedido para el Jefe ───────────────────────────────────
+function OrdenesJefeView({ cotizaciones, contactos, vendedores, currentUser, onUpdate }) {
+  const [search, setSearch] = React.useState("");
+  const [filterEstado, setFilterEstado] = React.useState("Todas");
+  const [filterTipo, setFilterTipo] = React.useState("Todos");
+  const [selected, setSelected] = React.useState(null);
+
+  const allOrders = cotizaciones.filter(q => q.ordenPedido);
+
+  const filtered = allOrders.filter(q => {
+    const contact = contactos.find(c => c.id === q.contactoId);
+    const nombre = (contact?.nombre || q.contactoNombre || "").toLowerCase();
+    const numero = (q.ordenNumero || q.numero || "").toLowerCase();
+    const vendedor = (q.vendedor || "").toLowerCase();
+    const s = search.toLowerCase();
+    const matchSearch = !s || nombre.includes(s) || numero.includes(s) || vendedor.includes(s);
+    const etapa = q.ordenFlujo?.etapa || "Pendiente de asignación";
+    const matchEstado = filterEstado === "Todas" || etapa === filterEstado;
+    const tipo = q.ordenPedido?.tipoOrden || "Calentadores";
+    const matchTipo = filterTipo === "Todos" || tipo === filterTipo;
+    return matchSearch && matchEstado && matchTipo;
+  }).sort((a, b) => String(b.ordenNumero || b.numero).localeCompare(String(a.ordenNumero || a.numero)));
+
+  const selectedQuote = selected ? cotizaciones.find(q => q.id === selected) : null;
+  const selectedContact = selectedQuote ? contactos.find(c => c.id === selectedQuote.contactoId) : null;
+
+  const etapas = ["Todas", "Pendiente de asignación", "Jefe técnico", "Técnico", "Programación", "Bodega y Facturación", "Completada"];
+  const tipos = ["Todos", "Calentadores", "Servicios", "Revisión técnica", "Iluminación"];
+  const estadoColor = { "Completada": "badge-green", "Técnico": "badge-blue", "Programación": "badge-yellow", "Bodega y Facturación": "badge-orange" };
+
+  return (
+    <div>
+      <div className="page-head">
+        <h2>Órdenes de pedido</h2>
+        <p>Vista general de todas las órdenes generadas. Busca por cliente, número o vendedor.</p>
+      </div>
+
+      <div className="section-card">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#888" }} />
+            <input
+              className="input"
+              style={{ paddingLeft: 32 }}
+              placeholder="Buscar por cliente, número de orden o vendedor..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <select className="input compact" value={filterEstado} onChange={e => setFilterEstado(e.target.value)} style={{ minWidth: 180 }}>
+            {etapas.map(e => <option key={e}>{e}</option>)}
+          </select>
+          <select className="input compact" value={filterTipo} onChange={e => setFilterTipo(e.target.value)} style={{ minWidth: 150 }}>
+            {tipos.map(t => <option key={t}>{t}</option>)}
+          </select>
+          <span style={{ fontSize: 12, color: "#888", whiteSpace: "nowrap" }}>{filtered.length} orden(es)</span>
+        </div>
+      </div>
+
+      <div className="section-card">
+        {filtered.length === 0 ? (
+          <div className="empty-state">No se encontraron órdenes con ese criterio de búsqueda.</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Orden</th>
+                <th>Cliente</th>
+                <th>Tipo</th>
+                <th>Vendedor</th>
+                <th>Técnico</th>
+                <th>Fecha inst.</th>
+                <th>Etapa</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(q => {
+                const contact = contactos.find(c => c.id === q.contactoId);
+                const etapa = q.ordenFlujo?.etapa || "Pendiente de asignación";
+                return (
+                  <tr key={q.id}>
+                    <td style={{ fontFamily: "monospace", fontWeight: 600 }}>{q.ordenNumero || q.numero.replace("CS-", "OP-")}</td>
+                    <td>{contact?.nombre || q.contactoNombre}<br/><small style={{ color: "#888" }}>{contact?.departamento || ""}</small></td>
+                    <td>{q.ordenPedido?.tipoOrden || "Calentadores"}</td>
+                    <td>{q.vendedor}</td>
+                    <td>{q.ordenPedido?.tecnicoAsignadoNombre || <span style={{ color: "#f59e0b" }}>Sin asignar</span>}</td>
+                    <td>{q.ordenPedido?.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : <span style={{ color: "#aaa" }}>Sin programar</span>}</td>
+                    <td><span className={`badge ${estadoColor[etapa] || "badge-gray"}`}>{etapa}</span></td>
+                    <td>
+                      <button className="btn-ghost small" onClick={() => setSelected(q.id)}>Ver / Editar</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {selectedQuote && (
+        <OrderFormModal
+          cotizacion={selectedQuote}
+          contacto={selectedContact}
+          currentUser={currentUser}
+          vendedores={vendedores}
+          onClose={() => setSelected(null)}
+          onSave={form => {
+            const history = [...(selectedQuote.ordenFlujo?.historial || []), { accion: "Registro actualizado por Jefe", usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+            onUpdate({ ...selectedQuote, ordenPedido: form, ordenFlujo: { ...(selectedQuote.ordenFlujo || {}), historial: history } });
+            setSelected(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── VISTA: Área técnica completa para el Jefe ────────────────────────────────
+function AreaTecnicaJefeView({ cotizaciones, contactos, vendedores, currentUser, onUpdate }) {
+  const [search, setSearch] = React.useState("");
+  const [selected, setSelected] = React.useState(null);
+
+  const allOrders = cotizaciones.filter(q => q.ordenPedido).filter(q => {
+    const etapa = q.ordenFlujo?.etapa || "";
+    return ["Jefe técnico", "Técnico", "Programación", "Bodega y Facturación", "Completada", "Pendiente de asignación"].includes(etapa) || etapa;
+  });
+
+  const filtered = allOrders.filter(q => {
+    const contact = contactos.find(c => c.id === q.contactoId);
+    const nombre = (contact?.nombre || q.contactoNombre || "").toLowerCase();
+    const numero = (q.ordenNumero || q.numero || "").toLowerCase();
+    const tecnico = (q.ordenPedido?.tecnicoAsignadoNombre || "").toLowerCase();
+    const s = search.toLowerCase();
+    return !s || nombre.includes(s) || numero.includes(s) || tecnico.includes(s);
+  });
+
+  const selectedQuote = selected ? cotizaciones.find(q => q.id === selected) : null;
+  const selectedContact = selectedQuote ? contactos.find(c => c.id === selectedQuote.contactoId) : null;
+
+  const byTecnico = {};
+  filtered.forEach(q => {
+    const key = q.ordenPedido?.tecnicoAsignadoNombre || "Sin técnico asignado";
+    if (!byTecnico[key]) byTecnico[key] = [];
+    byTecnico[key].push(q);
+  });
+
+  return (
+    <div>
+      <div className="page-head">
+        <h2>Área técnica</h2>
+        <p>Todas las órdenes del área técnica, agrupadas por técnico asignado.</p>
+      </div>
+
+      <div className="section-card">
+        <div style={{ position: "relative", maxWidth: 400 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#888" }} />
+          <input className="input" style={{ paddingLeft: 32 }} placeholder="Buscar por cliente, orden o técnico..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+      </div>
+
+      {Object.entries(byTecnico).sort(([a], [b]) => a === "Sin técnico asignado" ? 1 : a.localeCompare(b)).map(([tecnico, orders]) => (
+        <div className="section-card" key={tecnico}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <HardHat size={16} style={{ color: "#f59e0b" }} />
+            {tecnico}
+            <span style={{ fontSize: 12, fontWeight: 400, color: "#888" }}>— {orders.length} orden(es)</span>
+          </h3>
+          <table className="table">
+            <thead>
+              <tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Tipo visita</th><th>Fecha</th><th>Estado</th><th>Acción</th></tr>
+            </thead>
+            <tbody>
+              {orders.map(q => {
+                const contact = contactos.find(c => c.id === q.contactoId);
+                const etapa = q.ordenFlujo?.etapa || "Pendiente";
+                return (
+                  <tr key={q.id}>
+                    <td style={{ fontFamily: "monospace", fontWeight: 600 }}>{q.ordenNumero || q.numero.replace("CS-", "OP-")}</td>
+                    <td>{contact?.nombre || q.contactoNombre}</td>
+                    <td>{q.ordenPedido?.tipoOrden || "Calentadores"}</td>
+                    <td>{q.ordenPedido?.tipoEvaluacion || "Por definir"}</td>
+                    <td>{q.ordenPedido?.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : <span style={{ color: "#aaa" }}>Sin fecha</span>}</td>
+                    <td><span className="badge badge-blue">{etapa}</span></td>
+                    <td><button className="btn-ghost small" onClick={() => setSelected(q.id)}>Abrir</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      {filtered.length === 0 && <div className="section-card"><div className="empty-state">No hay órdenes técnicas.</div></div>}
+
+      {selectedQuote && (
+        <OrderFormModal
+          cotizacion={selectedQuote}
+          contacto={selectedContact}
+          currentUser={currentUser}
+          vendedores={vendedores}
+          onClose={() => setSelected(null)}
+          onSave={form => {
+            const history = [...(selectedQuote.ordenFlujo?.historial || []), { accion: "Actualizado desde Área técnica", usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+            onUpdate({ ...selectedQuote, ordenPedido: form, ordenFlujo: { ...(selectedQuote.ordenFlujo || {}), historial: history } });
+            setSelected(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── VISTA: Calendario del Jefe ───────────────────────────────────────────────
+function CalendarioJefeView({ cotizaciones, contactos, vendedores }) {
+  const [viewMode, setViewMode] = React.useState("Semana");
+  const [date, setDate] = React.useState(todayISO());
+  const [filterTecnico, setFilterTecnico] = React.useState("Todos");
+
+  const tecnicos = [...new Set(cotizaciones.filter(q => q.ordenPedido?.tecnicoAsignadoNombre).map(q => q.ordenPedido.tecnicoAsignadoNombre))].sort();
+
+  const getWeekDays = (refDate) => {
+    const d = new Date(refDate + "T12:00:00");
+    const day = d.getDay();
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    return Array.from({ length: 7 }, (_, i) => {
+      const nd = new Date(monday);
+      nd.setDate(monday.getDate() + i);
+      return nd.toISOString().slice(0, 10);
+    });
+  };
+
+  const getMonthDays = (refDate) => {
+    const [y, m] = refDate.split("-").map(Number);
+    const firstDay = new Date(y, m - 1, 1);
+    const lastDay = new Date(y, m, 0);
+    const days = [];
+    const startPad = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
+    for (let i = 0; i < startPad; i++) days.push(null);
+    for (let d = 1; d <= lastDay.getDate(); d++) days.push(`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`);
+    return days;
+  };
+
+  const getOrdersForDay = (dayISO) => cotizaciones.filter(q => {
+    if (!q.ordenPedido?.fechaInstalacion) return false;
+    if (q.ordenPedido.fechaInstalacion !== dayISO) return false;
+    if (filterTecnico !== "Todos" && q.ordenPedido?.tecnicoAsignadoNombre !== filterTecnico) return false;
+    return true;
+  });
+
+  const weekDays = getWeekDays(date);
+  const dayNames = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+  const monthNames = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+  const moveDate = (dir) => {
+    const d = new Date(date + "T12:00:00");
+    if (viewMode === "Día") d.setDate(d.getDate() + dir);
+    else if (viewMode === "Semana") d.setDate(d.getDate() + dir * 7);
+    else d.setMonth(d.getMonth() + dir);
+    setDate(d.toISOString().slice(0, 10));
+  };
+
+  const formatHeader = () => {
+    const d = new Date(date + "T12:00:00");
+    if (viewMode === "Día") return d.toLocaleDateString("es-GT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    if (viewMode === "Semana") { const w = getWeekDays(date); return `Semana del ${new Date(w[0]+"T12:00:00").toLocaleDateString("es-GT",{day:"numeric",month:"short"})} al ${new Date(w[6]+"T12:00:00").toLocaleDateString("es-GT",{day:"numeric",month:"short",year:"numeric"})}`; }
+    return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+  };
+
+  const OrderChip = ({ q }) => {
+    const contact = contactos.find(c => c.id === q.contactoId);
+    return (
+      <div style={{ background: "#fef3c7", border: "1px solid #f59e0b", borderRadius: 6, padding: "4px 8px", marginBottom: 4, fontSize: 11, lineHeight: 1.4 }}>
+        <strong style={{ color: "#92400e" }}>{q.ordenNumero || q.numero.replace("CS-","OP-")}</strong><br/>
+        {contact?.nombre || q.contactoNombre}<br/>
+        <span style={{ color: "#b45309" }}>👷 {q.ordenPedido?.tecnicoAsignadoNombre || "Sin técnico"} · {q.ordenPedido?.horario || "Sin horario"}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div className="page-head"><h2>Calendario</h2><p>Instalaciones y visitas programadas por día, semana y mes.</p></div>
+
+      <div className="section-card planning-filters" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="role-toggle">
+          {["Día","Semana","Mes"].map(v => <button key={v} className={viewMode===v?"active":""} onClick={() => setViewMode(v)}>{v}</button>)}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button className="btn-ghost small" onClick={() => moveDate(-1)}>◀</button>
+          <input className="input compact" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ minWidth: 140 }} />
+          <button className="btn-ghost small" onClick={() => moveDate(1)}>▶</button>
+        </div>
+        <span style={{ fontWeight: 500, fontSize: 13, color: "#444" }}>{formatHeader()}</span>
+        <select className="input compact" value={filterTecnico} onChange={e => setFilterTecnico(e.target.value)} style={{ minWidth: 160, marginLeft: "auto" }}>
+          <option value="Todos">Todos los técnicos</option>
+          {tecnicos.map(t => <option key={t}>{t}</option>)}
+        </select>
+      </div>
+
+      {viewMode === "Día" && (
+        <div className="section-card">
+          <h3 style={{ marginBottom: 12 }}>{new Date(date+"T12:00:00").toLocaleDateString("es-GT",{weekday:"long",day:"numeric",month:"long"})}</h3>
+          {getOrdersForDay(date).length === 0 ? <div className="empty-state">Sin instalaciones programadas para este día.</div> :
+            getOrdersForDay(date).map(q => <OrderChip key={q.id} q={q} />)}
+        </div>
+      )}
+
+      {viewMode === "Semana" && (
+        <div className="section-card" style={{ overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, minWidth: 560 }}>
+            {weekDays.map((day, i) => {
+              const orders = getOrdersForDay(day);
+              const isToday = day === todayISO();
+              return (
+                <div key={day} style={{ border: `1px solid ${isToday ? "#f59e0b" : "#e5e7eb"}`, borderRadius: 8, padding: 8, background: isToday ? "#fffbeb" : "#fafaf9", minHeight: 80 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? "#92400e" : "#888", marginBottom: 6 }}>{dayNames[i]}<br/>{new Date(day+"T12:00:00").toLocaleDateString("es-GT",{day:"numeric",month:"short"})}</div>
+                  {orders.map(q => <OrderChip key={q.id} q={q} />)}
+                  {orders.length === 0 && <div style={{ fontSize: 10, color: "#ccc", textAlign: "center", marginTop: 8 }}>—</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {viewMode === "Mes" && (
+        <div className="section-card" style={{ overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, minWidth: 560 }}>
+            {dayNames.map(d => <div key={d} style={{ fontSize: 11, fontWeight: 600, color: "#888", textAlign: "center", padding: "4px 0" }}>{d}</div>)}
+            {getMonthDays(date).map((day, i) => {
+              if (!day) return <div key={`pad-${i}`} />;
+              const orders = getOrdersForDay(day);
+              const isToday = day === todayISO();
+              return (
+                <div key={day} style={{ border: `1px solid ${isToday ? "#f59e0b" : "#e5e7eb"}`, borderRadius: 6, padding: "6px 4px", background: isToday ? "#fffbeb" : "#fafaf9", minHeight: 56, cursor: "pointer" }} onClick={() => { setDate(day); setViewMode("Día"); }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? "#92400e" : "#555", marginBottom: 2 }}>{day.slice(8)}</div>
+                  {orders.length > 0 && <div style={{ background: "#f59e0b", color: "#1c1917", borderRadius: 10, fontSize: 10, fontWeight: 700, textAlign: "center", padding: "1px 4px" }}>{orders.length} visita{orders.length > 1 ? "s" : ""}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── VISTA: Técnicos — asignación rápida de órdenes ──────────────────────────
+function TecnicosView({ cotizaciones, contactos, vendedores, currentUser, onUpdate }) {
+  const [selectedTecnico, setSelectedTecnico] = React.useState(null);
+  const [selected, setSelected] = React.useState(null);
+
+  const tecnicos = vendedores.filter(v => v.rol === "Técnico");
+  const allOrders = cotizaciones.filter(q => q.ordenPedido);
+
+  const getOrdersForTecnico = (email) =>
+    allOrders.filter(q => String(q.ordenPedido?.tecnicoAsignadoEmail || "").toLowerCase() === email.toLowerCase() &&
+      !["Completada"].includes(q.ordenFlujo?.etapa));
+
+  const unassigned = allOrders.filter(q => !q.ordenPedido?.tecnicoAsignadoEmail && !["Completada"].includes(q.ordenFlujo?.etapa));
+
+  const selectedQuote = selected ? cotizaciones.find(q => q.id === selected) : null;
+  const selectedContact = selectedQuote ? contactos.find(c => c.id === selectedQuote.contactoId) : null;
+
+  const assignTecnico = (quote, tech) => {
+    const history = [...(quote.ordenFlujo?.historial || []), { accion: `Técnico asignado: ${tech.nombre}`, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+    const presencial = quote.ordenPedido?.tipoEvaluacion === "Visita presencial";
+    const currentStage = quote.ordenFlujo?.etapa || "";
+    const nextStage = presencial && ["Pendiente de asignación", "Jefe técnico"].includes(currentStage) ? "Técnico" : currentStage;
+    onUpdate({ ...quote, ordenPedido: { ...quote.ordenPedido, tecnicoAsignadoEmail: tech.email, tecnicoAsignadoNombre: tech.nombre }, ordenFlujo: { ...(quote.ordenFlujo || {}), etapa: nextStage, historial: history } });
+  };
+
+  return (
+    <div>
+      <div className="page-head"><h2>Técnicos</h2><p>Asigna órdenes a técnicos y visualiza su carga de trabajo actual.</p></div>
+
+      {unassigned.length > 0 && (
+        <div className="section-card" style={{ borderLeft: "4px solid #f59e0b" }}>
+          <h3 style={{ color: "#92400e", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+            <HardHat size={16} /> Órdenes sin técnico asignado ({unassigned.length})
+          </h3>
+          <table className="table">
+            <thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Asignar técnico</th></tr></thead>
+            <tbody>
+              {unassigned.map(q => {
+                const contact = contactos.find(c => c.id === q.contactoId);
+                return (
+                  <tr key={q.id}>
+                    <td style={{ fontFamily: "monospace", fontWeight: 600 }}>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td>
+                    <td>{contact?.nombre || q.contactoNombre}<br/><small style={{ color: "#888" }}>{contact?.departamento || ""}</small></td>
+                    <td>{q.ordenPedido?.tipoOrden || "Calentadores"}</td>
+                    <td>{q.ordenPedido?.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : <span style={{ color: "#aaa" }}>Sin fecha</span>}</td>
+                    <td>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {tecnicos.map(tech => (
+                          <button key={tech.id || tech.email} className="btn-ghost small" style={{ fontSize: 11 }} onClick={() => assignTecnico(q, tech)}>
+                            <UserCheck size={11} style={{ marginRight: 3 }} />{tech.nombre.split(" ")[0]}
+                          </button>
+                        ))}
+                        <button className="btn-ghost small" onClick={() => setSelected(q.id)}>Ver detalle</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+        {tecnicos.length === 0 && <div className="section-card"><div className="empty-state">No hay técnicos registrados. Agrégalos en la sección Equipo.</div></div>}
+        {tecnicos.map(tech => {
+          const orders = getOrdersForTecnico(tech.email);
+          const isOpen = selectedTecnico === tech.email;
+          return (
+            <div className="section-card" key={tech.email} style={{ border: isOpen ? "1.5px solid #f59e0b" : undefined }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => setSelectedTecnico(isOpen ? null : tech.email)}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#fef3c7", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👷</div>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{tech.nombre}</div>
+                    <div style={{ fontSize: 11, color: "#888" }}>{tech.departamentosCobertura || "Sin cobertura definida"}</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ background: orders.length > 0 ? "#f59e0b" : "#e5e7eb", color: orders.length > 0 ? "#1c1917" : "#888", borderRadius: 20, padding: "2px 10px", fontSize: 12, fontWeight: 600 }}>{orders.length} órdenes</div>
+                  {isOpen ? <ChevronUp size={14} style={{ color: "#888", marginTop: 4 }} /> : <ChevronDown size={14} style={{ color: "#888", marginTop: 4 }} />}
+                </div>
+              </div>
+
+              {isOpen && (
+                <div style={{ marginTop: 12, borderTop: "1px solid #f0ede8", paddingTop: 10 }}>
+                  {orders.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#aaa", textAlign: "center", padding: "8px 0" }}>Sin órdenes activas</div>
+                  ) : (
+                    orders.map(q => {
+                      const contact = contactos.find(c => c.id === q.contactoId);
+                      return (
+                        <div key={q.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 10px", marginBottom: 6, fontSize: 12 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                            <strong style={{ fontFamily: "monospace" }}>{q.ordenNumero || q.numero.replace("CS-","OP-")}</strong>
+                            <span className="badge badge-blue" style={{ fontSize: 10 }}>{q.ordenFlujo?.etapa || "Pendiente"}</span>
+                          </div>
+                          <div>{contact?.nombre || q.contactoNombre}</div>
+                          <div style={{ color: "#888" }}>{q.ordenPedido?.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : "Sin fecha"} · {q.ordenPedido?.horario || "Sin horario"}</div>
+                          <button className="btn-ghost small" style={{ marginTop: 6, width: "100%" }} onClick={() => setSelected(q.id)}>Ver orden</button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {selectedQuote && (
+        <OrderFormModal
+          cotizacion={selectedQuote}
+          contacto={selectedContact}
+          currentUser={currentUser}
+          vendedores={vendedores}
+          onClose={() => setSelected(null)}
+          onSave={form => {
+            const history = [...(selectedQuote.ordenFlujo?.historial || []), { accion: "Actualizado desde Técnicos", usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }];
+            onUpdate({ ...selectedQuote, ordenPedido: form, ordenFlujo: { ...(selectedQuote.ordenFlujo || {}), historial: history } });
+            setSelected(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 function PlanningView({ cotizaciones, contactos }) {
   const [view, setView] = useState("Día"); const [date, setDate] = useState(todayISO());
   const orders = cotizaciones.filter(q=>q.ordenPedido?.fechaInstalacion).filter(q=>{ const d=q.ordenPedido.fechaInstalacion; if(view==="Día") return d===date; if(view==="Semana"){ const start=new Date(`${date}T12:00:00`); start.setDate(start.getDate()-start.getDay()+1); const end=new Date(start); end.setDate(end.getDate()+6); return d>=start.toISOString().slice(0,10)&&d<=end.toISOString().slice(0,10);} return d.slice(0,7)===date.slice(0,7); }).sort((a,b)=>(a.ordenPedido.horario||"").localeCompare(b.ordenPedido.horario||""));
@@ -1983,6 +2466,10 @@ export default function CasaSolarCRM() {
             {tab === "bodega" && <OperationsView mode="bodega" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "facturacion" && <OperationsView mode="facturacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "planificacion" && <PlanningView cotizaciones={cotizaciones} contactos={contactos} />}
+            {tab === "ordenes-jefe" && currentUser.rol === "Jefe" && <OrdenesJefeView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "area-tecnica" && currentUser.rol === "Jefe" && <AreaTecnicaJefeView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
+            {tab === "calendario-jefe" && currentUser.rol === "Jefe" && <CalendarioJefeView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} />}
+            {tab === "tecnicos" && currentUser.rol === "Jefe" && <TecnicosView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "equipo" && currentUser.rol === "Jefe" && (
               <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} />
             )}
@@ -1997,6 +2484,11 @@ const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
 
 .app-root { font-family: 'Inter', sans-serif; color: #1B2430; background: #F7F5F0; min-height: 600px; border-radius: 12px; overflow: hidden; }
+.badge-green { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+.badge-yellow { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.badge-orange { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
+.badge-gray { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+.input.compact { padding: 5px 8px; font-size: 12px; }
 .app-root * { box-sizing: border-box; }
 h1,h2,h3 { font-family: 'Space Grotesk', sans-serif; margin: 0; font-weight: 600; }
 p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
