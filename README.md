@@ -32,6 +32,7 @@ Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol
 ## Clientes anteriores y campañas
 
 - En **Contactos → Importar Excel**, jefes y vendedores pueden cargar archivos `.xls`, `.xlsx` o `.csv`, revisar posibles duplicados y decidir si omitirlos o actualizarlos. Los clientes cargados por un vendedor quedan asignados automáticamente a ese vendedor.
+- El importador reconoce encabezados en español e inglés, elimina diferencias de tildes, mayúsculas, espacios y símbolos, y guarda la información con campos internos en español. Incluye DPI/CUI, NIT/Tax ID y Observaciones/Notes.
 - Cada contacto incluye el permiso de promociones: pendiente, aceptado o no contactar.
 - En **Equipo** se registra el número de WhatsApp propio de cada vendedor.
 - En **Campañas** se crea un enlace individual por cliente y se registra vendedor, número del vendedor, fecha de envío, acceso, solicitud y uso del beneficio.
@@ -65,7 +66,7 @@ WhatsApp y el programa de correo no permiten adjuntar automáticamente archivos 
 
 ## Flujo operativo y técnico
 
-- Una **Visita técnica presencial** creada desde la orden se dirige primero a la bandeja del **Jefe técnico**.
+- Una **Visita técnica presencial** permite seleccionar fecha y hora y confirmarlas con **Programar fecha y hora**; luego se dirige a la bandeja del **Jefe técnico**.
 - El Jefe técnico puede asignarse a sí mismo o asignar/reasignar a otro técnico instalador.
 - Cuando una orden recibe una **fecha de instalación**, aparece simultáneamente en **Programación**, **Bodega**, **Facturación** y en el calendario. Si la fecha cambia, todas las áreas ven la fecha nueva.
 - El técnico asignado puede registrar la instalación realizada. El cierre exige el nombre de quien recibió el equipo y el informe del trabajo; guarda automáticamente fecha, hora, dirección y, con permiso del dispositivo, coordenadas GPS.

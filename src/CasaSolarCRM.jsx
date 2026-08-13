@@ -492,7 +492,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
   const draftKey = `casasolar:draft:contacto:${initial?.id || "nuevo"}:${currentUser.uid || currentUser.email}`;
   const defaultForm = initial || {
     nombre: "", telefono: "", email: "", canal: "Llamada entrante",
-    nit: "", direccion: "", departamento: "",
+    dpi: "", nit: "", direccion: "", departamento: "",
     productoInteres: CATALOGO[0].id, estado: "Nuevo",
     vendedor: currentUser.rol === "Vendedor" ? currentUser.nombre : (vendedores[0]?.nombre || currentUser.nombre),
     permisoPromociones: "Pendiente de confirmar", notas: "", fecha: todayISO(),
@@ -524,12 +524,22 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
           </div>
           <div className="row-2">
             <div>
+              <label className="field-label">DPI / CUI</label>
+              <input className="input" value={form.dpi || ""} onChange={e => set("dpi", e.target.value)} placeholder="0000 00000 0000" />
+            </div>
+            <div>
               <label className="field-label">NIT</label>
               <input className="input" value={form.nit || ""} onChange={e => set("nit", e.target.value)} placeholder="C/F" />
             </div>
+          </div>
+          <div className="row-2">
             <div>
               <label className="field-label">Departamento</label>
               <input className="input" value={form.departamento || ""} onChange={e => set("departamento", e.target.value)} placeholder="Quetzaltenango" />
+            </div>
+            <div>
+              <label className="field-label">Municipio</label>
+              <input className="input" value={form.municipio || ""} onChange={e => set("municipio", e.target.value)} placeholder="Quetzaltenango" />
             </div>
           </div>
           <label className="field-label">Dirección</label>
@@ -783,10 +793,10 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   const draftKey = `casasolar:draft:orden:${cotizacion.id || cotizacion.numero}`;
   const defaultForm = {
     tipoOrden: "Calentadores",
-    tipoEvaluacion: "Visita por llamada", fechaVisitaTecnica: "",
+    tipoEvaluacion: "Visita por llamada", fechaVisitaTecnica: "", horaVisitaTecnica: "", visitaTecnicaProgramada: false, visitaTecnicaProgramadaEn: "",
     fechaInstalacion: "", horario: "Mañana", direccion: contacto?.direccion || "",
     departamento: contacto?.departamento || "", telefono: contacto?.telefono || "",
-    nit: contacto?.nit || "", niveles: "1", materialTecho: "Lámina", tipoTecho: "",
+    dpi: contacto?.dpi || "", nit: contacto?.nit || "", niveles: "1", materialTecho: "Lámina", tipoTecho: "",
     tuberiaCaliente: "Sí", tuberiaFria: "Sí", presionAgua: "Media",
     medidaTuberiaCaliente: "CPVC 1/2 pulgada", medidaTuberiaFria: "PVC 1/2 pulgada", otroCalentador: "No",
     detalleOtroCalentador: "", variacionPresion: "No", detalleVariacionPresion: "",
@@ -816,6 +826,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   });
   const set = (key, value) => setForm(prev => ({
     ...prev, [key]: value,
+    ...(["fechaVisitaTecnica", "horaVisitaTecnica", "tipoEvaluacion"].includes(key) ? { visitaTecnicaProgramada: false, visitaTecnicaProgramadaEn: "" } : {}),
     ...(key === "estadoPago" && value === "Abonado" && !prev.fechaAnticipo ? { fechaAnticipo: todayISO() } : {}),
     ...(key === "estadoPago" && value === "Cancelado" && !prev.fechaCancelado ? { fechaCancelado: todayISO(), saldo: "0" } : {}),
     ...(key === "garantiaSolicitada" && value === "Sí" && !prev.garantiaFechaSolicitud ? { garantiaFechaSolicitud: todayISO() } : {}),
@@ -865,6 +876,11 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     if (area === "tecnico") setForm(prev => ({ ...prev, garantiaJefeTecnico: accepted ? "Aceptada" : "No aceptada", garantiaJefeTecnicoPor: currentUser.nombre, garantiaJefeTecnicoFecha: now, ...(accepted ? {} : { garantiaJefatura: "Pendiente", garantiaJefaturaPor: "", garantiaJefaturaFecha: "" }) }));
     else setForm(prev => ({ ...prev, garantiaJefatura: accepted ? "Aceptada" : "No aceptada", garantiaJefaturaPor: currentUser.nombre, garantiaJefaturaFecha: now }));
   };
+  const scheduleTechnicalVisit = () => {
+    if (!form.fechaVisitaTecnica || !form.horaVisitaTecnica) return window.alert("Selecciona la fecha y la hora de la visita técnica presencial.");
+    setForm(prev => ({ ...prev, visitaTecnicaProgramada: true, visitaTecnicaProgramadaEn: new Date().toISOString() }));
+    window.alert("Visita técnica presencial programada. Presiona Guardar registro para confirmar los cambios.");
+  };
   const field = (label, key, type = "text") => (
     <div><label className="field-label">{label}</label><input className="input" type={type} value={form[key]} onChange={e => set(key, e.target.value)} /></div>
   );
@@ -898,9 +914,11 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
             {field("Departamento de la visita", "departamentoVisita")}
             <div><label className="field-label">Técnico asignado</label><select className="input" disabled={!canAssignTechnician} value={form.tecnicoAsignadoEmail} onChange={e => { const tech = technicians.find(item => item.email === e.target.value); setForm(prev => ({ ...prev, tecnicoAsignadoEmail: e.target.value, tecnicoAsignadoNombre: tech?.nombre || "" })); }}><option value="">Sin asignar</option>{technicians.map(tech => <option key={tech.id || tech.email} value={tech.email}>{tech.nombre}{tech.departamentosCobertura ? ` · ${tech.departamentosCobertura}` : ""}</option>)}</select></div>
             {field(String(form.tipoEvaluacion).includes("presencial") ? "Fecha de visita técnica" : "Fecha de llamada o videollamada", "fechaVisitaTecnica", "date")}
+            {String(form.tipoEvaluacion).includes("presencial") && field("Hora de visita técnica", "horaVisitaTecnica", "time")}
           </div>
+          {String(form.tipoEvaluacion).includes("presencial") && <div className="evaluation-route-note"><Clock size={15}/><span>{form.visitaTecnicaProgramada ? `Programada para ${form.fechaVisitaTecnica} a las ${form.horaVisitaTecnica}` : "Selecciona fecha y hora, luego confirma la programación."}</span><button type="button" className="btn-primary small" onClick={scheduleTechnicalVisit}><Clock size={15}/> Programar fecha y hora</button></div>}
           <h4>Programación e instalación</h4>
-          <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("NIT", "nit")}</div>
+          <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("DPI / CUI", "dpi")}{field("NIT", "nit")}</div>
           <h4>Datos técnicos · {form.tipoOrden || "Calentadores"}</h4>
           {(form.tipoOrden || "Calentadores") === "Calentadores" && <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>}
           {form.tipoOrden === "Servicios" && <div className="form-grid">{select("Tipo de servicio", "tipoServicio", ["Mantenimiento", "Reparación", "Instalación", "Desinstalación", "Otro"])}{field("Equipo existente", "equipoExistente")}{field("Falla reportada", "fallaReportada")}{field("Servicio requerido", "servicioRequerido")}{field("Materiales o repuestos previstos", "materialesServicio")}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
@@ -1930,7 +1948,7 @@ export default function CasaSolarCRM() {
   };
   const updateContacto = (updated) => {
     persistContactos(contactos.map(c => c.id === updated.id ? updated : c));
-    const cliente = { id: updated.id, nombre: updated.nombre || "", telefono: updated.telefono || "", email: updated.email || "", nit: updated.nit || "C/F", direccion: updated.direccion || "", departamento: updated.departamento || "" };
+    const cliente = { id: updated.id, nombre: updated.nombre || "", telefono: updated.telefono || "", email: updated.email || "", dpi: updated.dpi || "", nit: updated.nit || "C/F", direccion: updated.direccion || "", municipio: updated.municipio || "", departamento: updated.departamento || "" };
     persistCotizaciones(cotizaciones.map(q => q.contactoId === updated.id ? { ...q, contactoNombre: updated.nombre, cliente } : q));
   };
   const assignContactos = (ids, seller) => {
@@ -1951,8 +1969,8 @@ export default function CasaSolarCRM() {
     validDate.setDate(validDate.getDate() + 30);
     const cliente = contacto ? {
       id: contacto.id, nombre: contacto.nombre || "", telefono: contacto.telefono || "",
-      email: contacto.email || "", nit: contacto.nit || "C/F",
-      direccion: contacto.direccion || "", departamento: contacto.departamento || "",
+      email: contacto.email || "", dpi: contacto.dpi || "", nit: contacto.nit || "C/F",
+      direccion: contacto.direccion || "", municipio: contacto.municipio || "", departamento: contacto.departamento || "",
     } : null;
     persistCotizaciones([{ ...data, id: uid(), numero, validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre, cliente }, ...cotizaciones]);
   };

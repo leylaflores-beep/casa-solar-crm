@@ -158,6 +158,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   lineField("Departamento", order.departamento || client.departamento, 111, 73, 90);
   lineField("Teléfono", order.telefono || client.telefono, 111, 83, 90);
   lineField("NIT", order.nit || client.nit, 111, 93, 90);
+  lineField("DPI / CUI", order.dpi || client.dpi, 111, 99, 90);
 
   section(12, 93, 92, "DESCRIPCIÓN DEL PRODUCTO");
   const orderItems = quote.items.slice(0, 16).map(item => [
@@ -187,6 +188,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   lineField("Departamento", order.departamento || client.departamento, 111, 135, 90);
   lineField("Teléfono", order.telefono || client.telefono, 111, 145, 90);
   lineField("NIT", order.nit || client.nit, 111, 155, 90);
+  lineField("DPI / CUI", order.dpi || client.dpi, 111, 161, 90);
 
   section(108, 164, 96, "DATOS TÉCNICOS");
   const technicalByType = {

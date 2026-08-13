@@ -29,6 +29,30 @@ const valueBy = (row, names) => {
   return entry ? clean(entry[1]) : "";
 };
 
+// Los archivos de clientes pueden venir de QuickBooks, Excel, Google Sheets u otros CRM.
+// Todos los encabezados se normalizan y se traducen a los campos internos en español.
+const IMPORT_ALIASES = {
+  nombre: ["nombre", "nombrecliente", "nombrecontacto", "cliente", "contacto", "customer", "customername", "contact", "contactname", "name", "fullname", "fullcustomername", "empresa", "company", "companyname", "business", "businessname", "razonsocial", "legalname"],
+  telefono: ["telefono", "telefonoprincipal", "telefonopublico", "numerotelefono", "phone", "phonenumber", "primaryphone", "publicphone", "businessphone", "mobile", "mobilephone", "cell", "cellphone", "celular", "movil", "whatsapp"],
+  email: ["email", "emailaddress", "primaryemail", "publicemail", "correo", "correopublico", "correoelectronico", "mail"],
+  dpi: ["dpi", "cui", "dpiocui", "identificacion", "identificacionpersonal", "documentoidentificacion", "personalid", "nationalid", "identification", "identificationnumber", "idnumber"],
+  nit: ["nit", "numeronit", "taxid", "taxnumber", "taxregistrationnumber", "vat", "vatnumber", "rtn"],
+  direccion: ["direccion", "direccionfisica", "direccioncliente", "address", "streetaddress", "physicaladdress", "billingaddress", "billingaddressline1", "addressline1", "street"],
+  aldea: ["aldea", "barrio", "zona", "village", "neighborhood", "district"],
+  municipio: ["municipio", "ciudad", "localidad", "municipality", "city", "town"],
+  departamento: ["departamento", "estado", "provincia", "region", "state", "province", "department", "county"],
+  observaciones: ["observaciones", "observacion", "resultadoobservaciones", "notasadicionales", "notas", "nota", "comentarios", "comentario", "notes", "additionalnotes", "note", "comments", "comment", "remarks", "remark", "memo", "description"],
+  producto: ["producto", "product", "productname", "item", "itemname", "servicio", "service"],
+  precio: ["precio", "preciocompra", "importe", "monto", "price", "purchaseprice", "amount", "total"],
+  promocion: ["promocion", "promotion", "discount", "descuento", "offer", "oferta"],
+  formaPago: ["formadepago", "metododepago", "paymentmethod", "paymenttype", "payment", "pago"],
+  vendedor: ["vendedor", "asesor", "ejecutivo", "salesperson", "salesrep", "seller", "owner"],
+  estado: ["estadocliente", "estado", "status", "customerstatus", "stage"],
+  canal: ["canal", "origen", "fuente", "channel", "source", "leadsource"],
+  sitioWeb: ["sitioweb", "paginaweb", "website", "web", "url"],
+};
+const importValue = (row, field) => valueBy(row, IMPORT_ALIASES[field] || []);
+
 export function ExcelImportModal({ contactos, currentUser, onImport, onClose }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -40,39 +64,45 @@ export function ExcelImportModal({ contactos, currentUser, onImport, onClose }) 
       const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
       const raw = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
       const parsed = raw.map(row => {
-        const nombre = valueBy(row, ["nombre", "razonsocial"]) || valueBy(row, ["cliente"]);
-        const fisica = valueBy(row, ["direccionfisica", "direccion"]);
-        const aldea = valueBy(row, ["aldea"]);
-        const municipio = valueBy(row, ["municipio"]);
-        const departamento = valueBy(row, ["departamento"]);
-        const producto = valueBy(row, ["producto"]);
-        const precio = valueBy(row, ["precio"]);
-        const promocion = valueBy(row, ["promocion"]);
-        const pago = valueBy(row, ["formadepago"]);
+        const nombre = importValue(row, "nombre");
+        const fisica = importValue(row, "direccion");
+        const aldea = importValue(row, "aldea");
+        const municipio = importValue(row, "municipio");
+        const departamento = importValue(row, "departamento");
+        const producto = importValue(row, "producto");
+        const precio = importValue(row, "precio");
+        const promocion = importValue(row, "promocion");
+        const pago = importValue(row, "formaPago");
+        const observaciones = importValue(row, "observaciones");
+        const vendedorArchivo = importValue(row, "vendedor");
+        const estadoArchivo = importValue(row, "estado");
+        const canalArchivo = importValue(row, "canal");
         return {
-          nombre, telefono: phoneDigits(valueBy(row, ["telefono", "celular", "movil"])), email: valueBy(row, ["email", "correo", "correoelectronico"]),
+          nombre, telefono: phoneDigits(importValue(row, "telefono")), email: importValue(row, "email"),
+          dpi: importValue(row, "dpi"), nit: importValue(row, "nit"), sitioWeb: importValue(row, "sitioWeb"),
           direccion: [fisica, aldea, municipio].filter(Boolean).join(", "), departamento,
           municipio, productoComprado: producto, precioCompra: precio, promocionCompra: promocion, formaPagoCompra: pago,
-          productoInteres: "calentadores", canal: "Base histórica", estado: "Cliente anterior",
-          vendedor: currentUser.nombre, permisoPromociones: "Pendiente de confirmar", fecha: new Date().toISOString().slice(0, 10),
-          notas: [producto && `Producto anterior: ${producto}`, precio && `Precio: ${precio}`, promocion && `Promoción: ${promocion}`, pago && `Forma de pago: ${pago}`].filter(Boolean).join(" · "),
+          productoInteres: "calentadores", canal: canalArchivo || "Base histórica", estado: estadoArchivo || "Cliente anterior",
+          vendedor: currentUser.rol === "Jefe" && vendedorArchivo ? vendedorArchivo : currentUser.nombre,
+          permisoPromociones: "Pendiente de confirmar", fecha: new Date().toISOString().slice(0, 10),
+          notas: [observaciones, producto && `Producto anterior: ${producto}`, precio && `Precio: ${precio}`, promocion && `Promoción: ${promocion}`, pago && `Forma de pago: ${pago}`].filter(Boolean).join(" · "),
         };
-      }).filter(item => item.nombre && item.nombre !== "0");
+      }).filter(item => item.nombre && item.nombre !== "0" && (item.telefono || item.email));
       const existingPhones = new Set(contactos.map(c => phoneDigits(c.telefono)).filter(Boolean));
       setRows(parsed.map(item => ({ ...item, duplicate: item.telefono ? existingPhones.has(item.telefono) : contactos.some(c => normalize(c.nombre) === normalize(item.nombre)) })));
-      setError(parsed.length ? "" : "No se encontraron clientes válidos en la primera hoja.");
+      setError(parsed.length ? "" : "No se encontraron clientes válidos. Cada fila debe tener nombre o empresa y, además, teléfono o correo. Se aceptan encabezados en español e inglés.");
     } catch (e) { setError(`No se pudo leer el archivo: ${e.message}`); }
   };
   const duplicateCount = rows.filter(r => r.duplicate).length;
   return <div className="modal-overlay" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}>
-    <div className="modal-head"><div><h3>Importar clientes desde Excel</h3><small>Compatible con archivos de QuickBooks .xls, .xlsx y .csv</small></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>
+    <div className="modal-head"><div><h3>Importar clientes desde Excel</h3><small>Compatible con QuickBooks y encabezados en español o inglés · .xls, .xlsx y .csv</small></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>
     <div className="modal-body">
       <label className="upload-box"><Upload size={22}/><strong>Seleccionar archivo de clientes</strong><input type="file" accept=".xls,.xlsx,.csv" onChange={parseFile}/></label>
       {error && <div className="alert-error">{error}</div>}
       {rows.length > 0 && <>
         <div className="import-summary"><strong>{rows.length}</strong> registros válidos · <strong>{duplicateCount}</strong> posibles duplicados</div>
         <label className="field-label">Cuando exista el cliente</label><select className="input" value={mode} onChange={e => setMode(e.target.value)}><option value="skip">No duplicar; conservar el actual</option><option value="update">Actualizar los campos disponibles</option></select>
-        <div className="preview-scroll"><table className="table small"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Ubicación</th><th>Producto anterior</th><th>Resultado</th></tr></thead><tbody>{rows.slice(0, 12).map((r, i) => <tr key={i}><td>{r.nombre}</td><td>{r.telefono || "—"}</td><td>{r.departamento || r.municipio || "—"}</td><td>{r.productoComprado || "—"}</td><td>{r.duplicate ? "Posible duplicado" : "Nuevo"}</td></tr>)}</tbody></table></div>
+        <div className="preview-scroll"><table className="table small"><thead><tr><th>Cliente</th><th>Teléfono</th><th>DPI</th><th>NIT</th><th>Ubicación</th><th>Resultado</th></tr></thead><tbody>{rows.slice(0, 12).map((r, i) => <tr key={i}><td>{r.nombre}</td><td>{r.telefono || "—"}</td><td>{r.dpi || "—"}</td><td>{r.nit || "—"}</td><td>{r.departamento || r.municipio || "—"}</td><td>{r.duplicate ? "Posible duplicado" : "Nuevo"}</td></tr>)}</tbody></table></div>
         {rows.length > 12 && <small>Se muestran 12 de {rows.length} registros.</small>}
       </>}
     </div>

@@ -2,7 +2,7 @@
 
 ## 1. Evaluación solicitada por Ventas
 
-- **Visita técnica presencial:** Vendedor → Jefe técnico → Técnico asignado (el Jefe técnico también puede asignarse) → Programación.
+- **Visita técnica presencial:** Vendedor selecciona fecha y hora y confirma **Programar fecha y hora** → Jefe técnico → Técnico asignado (el Jefe técnico también puede asignarse) → Programación.
 - **Llamada o videollamada:** Vendedor → Programación.
 
 ## 2. Instalación programada
@@ -11,7 +11,14 @@ Al guardar una fecha de instalación, la misma orden queda disponible simultáne
 
 - Programación: fecha, horario y técnico.
 - Bodega: productos, fecha y estado de preparación/despacho.
-- Facturación: cliente, NIT, pago, factura y número.
+- Facturación: cliente, DPI/CUI, NIT, pago, factura y número.
+
+## Datos bilingües de clientes
+
+- El importador acepta encabezados en español e inglés y los normaliza a los nombres internos en español.
+- Reconoce, entre otros: Nombre/Name/Company, Teléfono/Phone/Mobile, Correo/Email, DPI/CUI/National ID, NIT/Tax ID, Dirección/Address, Municipio/City, Departamento/State y Observaciones/Notes/Comments.
+- Cada fila válida debe incluir nombre o empresa y, además, teléfono o correo.
+- DPI y NIT se conservan en Contactos y en la Orden de Pedido.
 - Calendario completo: vista diaria, semanal y mensual.
 
 Un cambio de fecha actualiza la orden compartida; no crea una copia separada.
