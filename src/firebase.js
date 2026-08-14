@@ -38,11 +38,12 @@ export async function profileFromFirebaseUser(user) {
     email,
     nombre: savedProfile?.nombre || adminName || user.displayName || fallbackName || "Vendedor",
     rol: adminName ? "Jefe" : (savedProfile?.rol || "Vendedor"),
+    roles: adminName ? ["Jefe"] : (Array.isArray(savedProfile?.roles) ? savedProfile.roles : [savedProfile?.rol || "Vendedor"]),
     activo: adminName ? true : savedProfile?.activo !== false,
   };
 }
 
-export async function createCRMUser({ nombre, email, password, rol, telefono, departamentosCobertura, createdBy }) {
+export async function createCRMUser({ nombre, email, password, rol, roles, telefono, departamentosCobertura, createdBy }) {
   const secondaryApp = getApps().find(item => item.name === "user-creation")
     || initializeApp(firebaseConfig, "user-creation");
   const secondaryAuth = getAuth(secondaryApp);
@@ -54,6 +55,7 @@ export async function createCRMUser({ nombre, email, password, rol, telefono, de
       nombre: nombre.trim(),
       email: email.trim().toLowerCase(),
       rol,
+      roles: Array.isArray(roles) && roles.length ? roles : [rol],
       telefono: telefono || "",
       departamentosCobertura: departamentosCobertura || "",
       activo: true,
@@ -91,6 +93,15 @@ export async function setCRMUserActive(uid, active, changedBy = "") {
     estadoAcceso: active ? "Activo" : "Suspendido",
     estadoAccesoActualizadoEn: new Date().toISOString(),
     estadoAccesoActualizadoPor: changedBy,
+  }, { merge: true });
+}
+
+export async function updateCRMUserProfile(uid, changes, changedBy = "") {
+  if (!uid) throw new Error("El usuario no tiene un identificador de Firebase asociado.");
+  await setDoc(doc(db, "crm_data", `user_${uid}`), {
+    ...changes,
+    perfilActualizadoEn: new Date().toISOString(),
+    perfilActualizadoPor: changedBy,
   }, { merge: true });
 }
 

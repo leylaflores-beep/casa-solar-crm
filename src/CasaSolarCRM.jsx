@@ -19,6 +19,7 @@ import {
   savePublicCampaign,
   sendCRMPasswordReset,
   setCRMUserActive,
+  updateCRMUserProfile,
   setSharedData,
   subscribeSharedData, subscribeCRMUserProfile, updateSharedDataRecords,
 } from "./firebase.js";
@@ -28,6 +29,31 @@ import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } fr
 const DISCOUNT_AUTHORIZERS = {
   "ligiaeugeniamolina@gmail.com": "Ligia Eugenia Molina",
   "leyla.flores@gmail.com": "Leyla Flores",
+};
+
+const userRoles = user => [...new Set([user?.rol, ...(Array.isArray(user?.roles) ? user.roles : [])].filter(Boolean))];
+const hasRole = (user, role) => userRoles(user).includes(role);
+const roleLabel = user => userRoles(user).join(" + ") || "Usuario";
+const SAMUEL_CORRECT_EMAIL = "casasolar.bodega.gt@gmail.com";
+const SAMUEL_WRONG_EMAIL = "casasolar.bodegagt@gmail.com";
+const normalizeIdentity = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const consolidateSamuelUser = team => {
+  const candidates = team.filter(user => normalizeIdentity(user.nombre) === "samuellemus" || [SAMUEL_CORRECT_EMAIL, SAMUEL_WRONG_EMAIL].includes(String(user.email || "").toLowerCase()));
+  if (!candidates.length) return { team, changed: false };
+  const primary = candidates.find(user => String(user.email || "").toLowerCase() === SAMUEL_CORRECT_EMAIL && user.uid)
+    || candidates.find(user => user.uid)
+    || candidates.find(user => String(user.email || "").toLowerCase() === SAMUEL_CORRECT_EMAIL)
+    || candidates[0];
+  const merged = {
+    ...candidates.reduce((result, user) => ({ ...result, ...Object.fromEntries(Object.entries(user).filter(([, value]) => value !== "" && value != null)) }), {}),
+    ...primary, id: primary.id || uid(), nombre: "Samuel Lemus", rol: "Jefe técnico", roles: ["Jefe técnico", "Vendedor"], usuarioEspecial: true,
+    correoObjetivo: SAMUEL_CORRECT_EMAIL,
+  };
+  const firstIndex = Math.min(...candidates.map(user => team.indexOf(user)));
+  const withoutDuplicates = team.filter(user => !candidates.includes(user));
+  withoutDuplicates.splice(Math.min(firstIndex, withoutDuplicates.length), 0, merged);
+  const changed = candidates.length > 1 || primary.rol !== "Jefe técnico" || !hasRole(primary, "Vendedor") || primary.nombre !== "Samuel Lemus" || !primary.usuarioEspecial || primary.correoObjetivo !== SAMUEL_CORRECT_EMAIL;
+  return { team: withoutDuplicates, changed };
 };
 
 const WAREHOUSES = {
@@ -152,6 +178,7 @@ function Badge({ estado }) {
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
 
@@ -165,7 +192,9 @@ function LoginScreen({ onLogin }) {
     try {
       await onLogin(email, password);
     } catch (e) {
-      setError("Correo o contraseña incorrectos. Verifica los datos e inténtalo nuevamente.");
+      setError(String(email || "").trim().toLowerCase() === SAMUEL_WRONG_EMAIL
+        ? `El correo de Samuel fue escrito sin el punto. Utiliza ${SAMUEL_CORRECT_EMAIL}.`
+        : "Correo o contraseña incorrectos. Verifica los datos e inténtalo nuevamente.");
       setEnviando(false);
     }
   };
@@ -185,8 +214,8 @@ function LoginScreen({ onLogin }) {
         <input className="input" type="email" autoComplete="username" placeholder="correo@empresa.com"
           value={email} onKeyDown={onKeyDown} onChange={e => setEmail(e.target.value)} />
         <label className="field-label">Contraseña</label>
-        <input className="input" type="password" autoComplete="current-password" placeholder="Tu contraseña"
-          value={password} onKeyDown={onKeyDown} onChange={e => setPassword(e.target.value)} />
+        <span className="password-field login-password-field"><input className="input" type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="Tu contraseña"
+          value={password} onKeyDown={onKeyDown} onChange={e => setPassword(e.target.value)} /><button type="button" className="icon-btn" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span>
         {error && <p className="login-error">{error}</p>}
 
         <button className="btn-primary" type="button" onClick={entrar} disabled={enviando}>
@@ -199,8 +228,9 @@ function LoginScreen({ onLogin }) {
 }
 
 function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicitudes = [], onLogout }) {
-  const operationalRole = ["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].includes(currentUser.rol);
-  const items = operationalRole ? [] : [
+  const operationalRole = ["Jefe técnico", "Técnico", "Programación", "Bodega", "Facturación"].some(role => hasRole(currentUser, role));
+  const hasSalesAccess = hasRole(currentUser, "Vendedor") || hasRole(currentUser, "Jefe") || !operationalRole;
+  const items = hasSalesAccess ? [
     { id: "dashboard", label: "Panel", icon: LayoutDashboard },
     { id: "contactos", label: "Contactos", icon: Users2 },
     { id: "calculadora", label: "Calculadora de rutas", icon: Calculator },
@@ -209,7 +239,7 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "seguimientos", label: "Seguimientos", icon: ClipboardList },
     { id: "campanas", label: "Campañas", icon: Megaphone },
     { id: "catalogo", label: "Catálogo", icon: Package },
-  ];
+  ] : [];
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
   if (["Jefe", "Jefe técnico", "Técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "informes-tecnicos", label: "Informes de instalación", icon: ClipboardList });
   const queuedPendingIds = new Set(descuentoSolicitudes.filter(request => request.estado === "Pendiente").map(request => request.id));
@@ -237,7 +267,7 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
           <div className="avatar">{currentUser.nombre.slice(0, 2).toUpperCase()}</div>
           <div>
             <div className="user-name">{currentUser.nombre}</div>
-            <div className="user-role">{currentUser.rol}</div>
+            <div className="user-role">{roleLabel(currentUser)}</div>
           </div>
         </div>
         <button className="btn-ghost small change-user-btn" onClick={onLogout}><LogOut size={14} /> Cambiar usuario</button>
@@ -498,7 +528,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
     nombre: "", telefono: "", email: "", canal: "Llamada entrante",
     dpi: "", nit: "", direccion: "", departamento: "",
     productoInteres: CATALOGO[0].id, estado: "Nuevo",
-    vendedor: currentUser.rol === "Vendedor" ? currentUser.nombre : (vendedores[0]?.nombre || currentUser.nombre),
+    vendedor: hasRole(currentUser, "Vendedor") && !hasRole(currentUser, "Jefe") ? currentUser.nombre : (vendedores[0]?.nombre || currentUser.nombre),
     permisoPromociones: "Pendiente de confirmar", notas: "", fecha: todayISO(),
   };
   const [form, setForm] = useState(() => readDraft(draftKey, defaultForm));
@@ -1568,9 +1598,9 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
           <label><span className="field-label">Nombre completo</span><input className="input" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre del usuario" /></label>
           <label><span className="field-label">Correo electrónico</span><input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@correo.com" /></label>
           <label><span className="field-label">Contraseña inicial</span><span className="password-field"><input className="input" type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" className="icon-btn" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></span></label>
-          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
+          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
           <label><span className="field-label">WhatsApp</span><input className="input" value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="Número opcional" /></label>
-          {rol === "Técnico" && <label><span className="field-label">Departamentos que cubre</span><input className="input" value={departamentosCobertura} onChange={e => setDepartamentosCobertura(e.target.value)} placeholder="Ej. Guatemala, Sacatepéquez y Chimaltenango" /></label>}
+          {(rol === "Técnico" || rol === "Jefe técnico + Vendedor" || rol === "Jefe técnico") && <label><span className="field-label">Departamentos que cubre</span><input className="input" value={departamentosCobertura} onChange={e => setDepartamentosCobertura(e.target.value)} placeholder="Ej. Guatemala, Sacatepéquez y Chimaltenango" /></label>}
         </div>
         {message && <p className={message.includes("correctamente") ? "form-success" : "login-error"}>{message}</p>}
         <button className="btn-primary" onClick={createAccess} disabled={creating}><Plus size={16} /> {creating ? "Creando acceso…" : "Crear usuario"}</button>
@@ -1592,6 +1622,9 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
               <input className="input compact" style={{ flex: 1 }} defaultValue={v.telefono || ""} placeholder="Número de WhatsApp" onBlur={e => onUpdate({ ...v, telefono: e.target.value.trim() })} />
               <input className="input compact" style={{ minWidth: 210, flex: 1 }} type="email" value={emailDrafts[v.id] ?? v.email ?? ""} placeholder="Correo de acceso" onChange={e => setEmailDrafts(current => ({ ...current, [v.id]: e.target.value }))} />
               {(emailDrafts[v.id] ?? v.email ?? "").trim().toLowerCase() !== String(v.email || "").trim().toLowerCase() && <button className="btn-primary small" onClick={async () => { const saved = await onChangeEmail(v, emailDrafts[v.id]); if (saved) setEmailDrafts(current => { const next = { ...current }; delete next[v.id]; return next; }); }}>Guardar correo</button>}
+              <select className="input compact" style={{ minWidth: 190 }} value={Array.isArray(v.roles) && v.roles.includes("Jefe técnico") && v.roles.includes("Vendedor") ? "Jefe técnico + Vendedor" : (v.rol || "Vendedor")} onChange={e => { const special = e.target.value === "Jefe técnico + Vendedor"; onUpdate({ ...v, rol: special ? "Jefe técnico" : e.target.value, roles: special ? ["Jefe técnico", "Vendedor"] : [e.target.value], usuarioEspecial: special }); }}><option>Vendedor</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select>
+              {v.usuarioEspecial && <span className="badge badge-blue">Usuario especial</span>}
+              {v.usuarioEspecial && String(v.email || "").toLowerCase() !== SAMUEL_CORRECT_EMAIL && <button className="btn-primary small" onClick={() => onChangeEmail(v, SAMUEL_CORRECT_EMAIL)}><Mail size={14}/> Corregir correo de Samuel</button>}
               <span className={`badge ${v.activo === false ? "badge-gray" : "badge-green"}`}>{v.activo === false ? "Suspendido" : "Activo"}</span>
               {v.email && <button className="btn-ghost small" onClick={() => onResetPassword(v)} title="Enviar enlace de cambio al correo"><KeyRound size={14}/> Restablecer</button>}
               <button className="btn-ghost small" onClick={() => onToggleAccess(v, v.activo === false)}>{v.activo === false ? <><UserCheck size={14}/> Reactivar</> : <><UserX size={14}/> Suspender</>}</button>
@@ -1886,7 +1919,9 @@ export default function CasaSolarCRM() {
         storageGet("casasolar:campaigns", true),
         storageGet("casasolar:descuentos", true),
       ]);
-      let sellerList = v || [];
+      const samuelConsolidation = consolidateSamuelUser(v || []);
+      let sellerList = samuelConsolidation.team;
+      if (samuelConsolidation.changed) await storageSet("casasolar:vendedores", sellerList, true);
       const linkedSeller = sellerList.find(item => item.uid === profile.uid || item.email === profile.email || item.nombre === profile.nombre);
       if (linkedSeller?.activo === false) {
         await setCRMUserActive(profile.uid, false, "Validación automática del CRM");
@@ -1898,7 +1933,7 @@ export default function CasaSolarCRM() {
       if (linkedSeller) {
         const linkedProfile = { ...linkedSeller, uid: profile.uid, email: profile.email };
         sellerList = sellerList.map(item => item.id === linkedSeller.id ? linkedProfile : item);
-        setCurrentUser({ ...profile, nombre: linkedProfile.nombre });
+        setCurrentUser({ ...profile, nombre: linkedProfile.nombre, rol: linkedProfile.rol || profile.rol, roles: linkedProfile.roles || profile.roles });
         await storageSet("casasolar:vendedores", sellerList, true);
       }
       const loadedQuotes = q || [];
@@ -2151,7 +2186,10 @@ export default function CasaSolarCRM() {
   };
   const addVendedor = (nombre, telefono) => persistVendedores([...vendedores, { id: uid(), nombre, telefono }]);
   const createUserAccess = async ({ nombre, email, password, rol, telefono, departamentosCobertura }) => {
-    const profile = await createCRMUser({ nombre, email, password, rol, telefono, departamentosCobertura, createdBy: currentUser });
+    const special = rol === "Jefe técnico + Vendedor";
+    const primaryRole = special ? "Jefe técnico" : rol;
+    const roles = special ? ["Jefe técnico", "Vendedor"] : [primaryRole];
+    const profile = await createCRMUser({ nombre, email, password, rol: primaryRole, roles, telefono, departamentosCobertura, createdBy: currentUser });
     const existing = vendedores.find(item => String(item.email || "").toLowerCase() === profile.email);
     if (existing) {
       persistVendedores(vendedores.map(item => item.id === existing.id ? { ...item, ...profile } : item));
@@ -2167,8 +2205,9 @@ export default function CasaSolarCRM() {
     if (vendedores.some(v => v.id !== updated.id && v.nombre.toLowerCase() === newName.toLowerCase())) {
       return window.alert("Ya existe otro vendedor con ese nombre.");
     }
-    const saved = { ...updated, nombre: newName };
+    const saved = { ...updated, nombre: newName, roles: Array.isArray(updated.roles) && updated.roles.length ? updated.roles : [updated.rol || "Vendedor"] };
     persistVendedores(vendedores.map(v => v.id === saved.id ? saved : v));
+    if (saved.uid) await updateCRMUserProfile(saved.uid, { nombre: saved.nombre, rol: saved.rol, roles: saved.roles, telefono: saved.telefono || "", departamentosCobertura: saved.departamentosCobertura || "", usuarioEspecial: Boolean(saved.usuarioEspecial) }, currentUser.nombre);
     if (oldName && oldName !== newName) {
       persistContactos(contactos.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
       persistCotizaciones(cotizaciones.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
