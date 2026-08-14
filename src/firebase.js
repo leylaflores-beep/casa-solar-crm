@@ -171,6 +171,40 @@ export async function appendSharedData(key, value) {
   }, { merge: true });
 }
 
+// Agrega o actualiza registros por ID dentro de una transacción. Así una sesión
+// antigua nunca reemplaza los clientes, cotizaciones u órdenes de otros usuarios.
+export async function upsertSharedDataRecords(key, records) {
+  const incoming = (Array.isArray(records) ? records : [records]).filter(item => item?.id);
+  if (!incoming.length) return [];
+  const target = doc(db, "crm_data", documentName(key));
+  return runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(target);
+    const current = snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : [];
+    const byId = new Map(current.map(item => [item.id, item]));
+    incoming.forEach(item => byId.set(item.id, { ...(byId.get(item.id) || {}), ...item, actualizadoEn: new Date().toISOString() }));
+    const incomingIds = new Set(incoming.map(item => item.id));
+    const next = [...incoming.map(item => byId.get(item.id)), ...current.filter(item => !incomingIds.has(item.id))];
+    transaction.set(target, { value: next, updatedAt: new Date().toISOString() }, { merge: true });
+    return next;
+  });
+}
+
+// Crea una cotización y asigna el correlativo usando la lista más reciente en
+// Firestore, evitando números repetidos si dos vendedores guardan a la vez.
+export async function appendSharedQuote(key, quote, year) {
+  const target = doc(db, "crm_data", documentName(key));
+  return runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(target);
+    const current = snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : [];
+    const max = current
+      .filter(item => String(item.numero || "").startsWith(`CS-${year}-`))
+      .reduce((value, item) => Math.max(value, Number(String(item.numero).split("-").pop()) || 0), 0);
+    const created = { ...quote, numero: `CS-${year}-${String(max + 1).padStart(4, "0")}`, creadoEn: quote.creadoEn || new Date().toISOString() };
+    transaction.set(target, { value: [created, ...current], updatedAt: new Date().toISOString() }, { merge: true });
+    return created;
+  });
+}
+
 // Actualiza registros existentes dentro de una transacción para no reemplazar
 // seguimientos agregados por otro usuario mientras la pantalla estaba abierta.
 export async function updateSharedDataRecords(key, ids, changes) {

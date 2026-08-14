@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Sun, Phone, MessageCircle, Camera, ThumbsUp, Globe, Users2, FileText,
   ClipboardList, LayoutDashboard, Plus, Search, X, LogOut, Settings,
@@ -9,6 +9,7 @@ import {
 import {
   getSharedData,
   appendSharedData,
+  appendSharedQuote,
   createCRMUser,
   deleteCRMContact,
   loginWithEmail,
@@ -20,6 +21,7 @@ import {
   sendCRMPasswordReset,
   setCRMUserActive,
   updateCRMUserProfile,
+  upsertSharedDataRecords,
   setSharedData,
   subscribeSharedData, subscribeCRMUserProfile, updateSharedDataRecords,
 } from "./firebase.js";
@@ -313,7 +315,6 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const [warehouse, setWarehouse] = useState("quetzaltenango");
   const [destination, setDestination] = useState("");
   const [address, setAddress] = useState({ departamento: "Quetzaltenango", municipio: "", lugar: "", zona: "", via: "", nomenclatura: "", casa: "", referencia: "" });
-  const [roundTrip, setRoundTrip] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [calculating, setCalculating] = useState(false);
@@ -342,7 +343,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const transportFromResult = () => ({
     id: uid(), productoId: "transporte_ruta", productoNombre: "Transporte", descripcion: "Transporte", tamano: "",
     cantidad: 1, precioLista: result.cost, precioUnitario: result.cost,
-    ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, direccionIngresada: fullDestination, referencia: address.referencia, kilometros: result.chargedKm, distanciaUnaVia: result.oneWayKm, idaYRegreso: roundTrip, tarifaKm: TRANSPORT_RATE },
+    ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, direccionIngresada: fullDestination, referencia: address.referencia, kilometros: result.chargedKm, distanciaUnaVia: result.oneWayKm, idaYRegreso: true, tarifaKm: TRANSPORT_RATE, tarifaIncluyeRegreso: true },
   });
 
   const attachTransport = () => {
@@ -388,7 +389,9 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
       const routeData = await routeResponse.json();
       if (!routeResponse.ok || routeData.code !== "Ok" || !routeData.routes?.length) throw new Error("No se pudo calcular una ruta vehicular entre esos puntos.");
       const oneWayKm = routeData.routes[0].distance / 1000;
-      const chargedKm = oneWayKm * (roundTrip ? 2 : 1);
+      // La tarifa de Q7.50 por kilómetro ya contempla el viaje de ida y regreso.
+      // La distancia al destino se cobra una sola vez, sin duplicarla.
+      const chargedKm = oneWayKm;
       setResult({ origin, target, oneWayKm, chargedKm, cost: chargedKm * TRANSPORT_RATE });
       setPendingSaved(false); setAttachedMessage("");
     } catch (reason) {
@@ -398,7 +401,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
 
   return (
     <div>
-      <div className="page-head"><h2>Calculadora de rutas</h2><p>Distancia vehicular en Guatemala y costo de transporte a Q 7.50 por kilómetro.</p></div>
+      <div className="page-head"><h2>Calculadora de rutas</h2><p>Distancia vehicular en Guatemala. La tarifa de Q 7.50 por kilómetro ya incluye ida y regreso.</p></div>
       <div className="route-layout">
         <div className="section-card route-form">
           <label className="field-label">Punto de salida</label>
@@ -418,15 +421,15 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
             <label><span className="field-label">Referencia conocida</span><input className="input" value={address.referencia} onChange={e => { setAddressPart("referencia", e.target.value); setDestination(e.target.value); }} placeholder="Ej. Frente a iglesia o escuela" /></label>
           </div>
           <div className="address-preview"><MapPin size={16} /><span>{fullDestination || "Completa la dirección del cliente"}</span></div>
-          <label className="roundtrip-check"><input type="checkbox" checked={roundTrip} onChange={e => setRoundTrip(e.target.checked)} /> Calcular ida y regreso</label>
+          <div className="route-rate-note"><CheckCircle2 size={16}/><span>Q 7.50 por kilómetro incluye automáticamente ida y regreso. La distancia no se duplica.</span></div>
           {error && <div className="route-error">{error}</div>}
           <button className="btn-primary" onClick={calculate} disabled={calculating}>{calculating ? "Calculando ruta…" : <><Calculator size={16} /> Calcular distancia y costo</>}</button>
         </div>
         <div className="section-card route-result">
           {!result ? <div className="route-empty"><MapPin size={28} /><strong>El resultado aparecerá aquí</strong><span>Usaremos la ruta vehicular disponible, no la distancia en línea recta.</span></div> : <>
-            <div className="route-result-head"><span>RESULTADO</span><strong>{roundTrip ? "Ida y regreso" : "Solo ida"}</strong></div>
-            <div className="route-metric"><span>Distancia de una vía</span><strong>{result.oneWayKm.toFixed(1)} km</strong></div>
-            <div className="route-metric"><span>Kilómetros a cobrar</span><strong>{result.chargedKm.toFixed(1)} km</strong></div>
+            <div className="route-result-head"><span>RESULTADO</span><strong>Ida y regreso incluidos</strong></div>
+            <div className="route-metric"><span>Distancia hasta el destino</span><strong>{result.oneWayKm.toFixed(1)} km</strong></div>
+            <div className="route-metric"><span>Kilómetros base para cobro</span><strong>{result.chargedKm.toFixed(1)} km</strong></div>
             <div className="route-formula">{result.chargedKm.toFixed(1)} km × Q {TRANSPORT_RATE.toFixed(2)}</div>
             <div className="route-total"><span>Costo de transporte</span><strong>{fmtMoney(result.cost)}</strong></div>
             <small>Destino encontrado: {result.target.name}</small>
@@ -449,7 +452,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   );
 }
 
-function HeaterCostCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
+function HeaterCostCalculator() {
   const draftKey = "casasolar:calculadora-costos";
   const saved = readDraft(draftKey, {});
   const [model, setModel] = useState(saved.model || "CSG15");
@@ -462,49 +465,18 @@ function HeaterCostCalculator({ cotizaciones, currentUser, onUpdateCotizacion })
   const [freight, setFreight] = useState(saved.freight ?? "0");
   const [filter, setFilter] = useState(saved.filter ?? "0");
   const [other, setOther] = useState(saved.other ?? "0");
-  const [selectedParts, setSelectedParts] = useState([]);
-  const [selectedQuoteId, setSelectedQuoteId] = useState("");
-  const [attachedMessage, setAttachedMessage] = useState("");
-  const authorizedEmails = ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com", SAMUEL_CORRECT_EMAIL];
-  const currentEmail = String(currentUser?.email || "").trim().toLowerCase();
-  const currentName = normalizeIdentity(currentUser?.nombre || "");
-  const isLeyla = currentEmail === "leyla.flores@gmail.com" || (currentName.includes("leyla") && currentName.includes("flores"));
-  const isLigia = currentEmail === "ligiaeugeniamolina@gmail.com" || currentName.includes("ligia");
-  const isSamuel = currentEmail === SAMUEL_CORRECT_EMAIL || (currentName.includes("samuel") && currentName.includes("lemus"));
-  const canAttachToQuote = authorizedEmails.includes(currentEmail) || isLeyla || isLigia || isSamuel;
-  const visibleQuotes = isLeyla || isLigia
-    ? cotizaciones : cotizaciones.filter(item => item.vendedor === currentUser?.nombre);
+  const [selectedParts, setSelectedParts] = useState(Array.isArray(saved.selectedParts) ? saved.selectedParts.slice(0, 2) : []);
   const numericPrice = Math.max(0, Number(price) || 0);
   const calculatedParts = parts.map(part => ({ ...part, cost: numericPrice * Math.max(0, Number(part.percentage) || 0) / 100 }));
   const percentageTotal = calculatedParts.reduce((sum, part) => sum + (Number(part.percentage) || 0), 0);
-  const componentTotal = calculatedParts.reduce((sum, part) => sum + part.cost, 0);
+  const selectedComponentTotal = calculatedParts.filter(part => selectedParts.includes(part.id)).reduce((sum, part) => sum + part.cost, 0);
   const extraTotal = [freight, filter, other].reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
-  const grandTotal = componentTotal + extraTotal;
-  useEffect(() => { saveDraft(draftKey, { model, price, parts, freight, filter, other }); }, [model, price, parts, freight, filter, other]);
+  const grandTotal = selectedComponentTotal + extraTotal;
+  useEffect(() => { saveDraft(draftKey, { model, price, parts, freight, filter, other, selectedParts }); }, [model, price, parts, freight, filter, other, selectedParts]);
   const updatePart = (id, key, value) => setParts(current => current.map(part => part.id === id ? { ...part, [key]: value } : part));
   const togglePart = id => setSelectedParts(current => current.includes(id) ? current.filter(item => item !== id) : current.length < 2 ? [...current, id] : current);
-  const attachParts = async () => {
-    if (!canAttachToQuote || !selectedQuoteId || !selectedParts.length) return;
-    const quote = cotizaciones.find(item => item.id === selectedQuoteId);
-    if (!quote) return setAttachedMessage("No encontramos la cotización seleccionada.");
-    const selectedItems = calculatedParts.filter(part => selectedParts.includes(part.id)).map(part => ({
-      id: uid(), productoId: `componente_calentador_${part.id}`, productoNombre: `${model} · ${part.name}`,
-      descripcion: `Parte de calentador solar ${model} · ${part.name} (${Number(part.percentage || 0).toFixed(2)}%)`, tamano: model,
-      cantidad: 1, precioLista: part.cost, precioUnitario: part.cost, porcentajeCosto: Number(part.percentage) || 0, origenCalculo: "Calculadora de costos",
-    }));
-    const items = [...(quote.items || []), ...selectedItems];
-    const total = items.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
-    const updated = { ...quote, items, total };
-    if (quote.descuentoAutorizado) {
-      updated.totalOriginal = total; updated.descuentoAutorizado = null; updated.descuentoSolicitud = null;
-      updated.descuentoHistorial = [...(quote.descuentoHistorial || []), { accion: "Invalidado al agregar partes desde la calculadora de costos", fecha: new Date().toISOString(), usuario: currentUser.nombre, email: currentUser.email || "" }];
-    }
-    await onUpdateCotizacion(updated);
-    setAttachedMessage(`${selectedItems.length} parte${selectedItems.length === 1 ? "" : "s"} agregada${selectedItems.length === 1 ? "" : "s"} a ${quote.numero || "la cotización"}.`);
-    setSelectedParts([]); setSelectedQuoteId("");
-  };
   const reset = () => {
-    setModel("CSG15"); setPrice("5975"); setParts([{ id: "tanque", name: "Tanque", percentage: "50" }, { id: "tubos", name: "Tubos", percentage: "35" }, { id: "estructura", name: "Estructura", percentage: "15" }]); setFreight("0"); setFilter("0"); setOther("0");
+    setModel("CSG15"); setPrice("5975"); setParts([{ id: "tanque", name: "Tanque", percentage: "50" }, { id: "tubos", name: "Tubos", percentage: "35" }, { id: "estructura", name: "Estructura", percentage: "15" }]); setFreight("0"); setFilter("0"); setOther("0"); setSelectedParts([]);
   };
   return <div>
     <div className="page-head row"><div><h2>Calculadora de costos de calentadores</h2><p>Distribuye el precio manual del calentador entre tanque, tubos y estructura.</p></div><button className="btn-ghost" onClick={reset}>Restablecer valores</button></div>
@@ -527,14 +499,13 @@ function HeaterCostCalculator({ cotizaciones, currentUser, onUpdateCotizacion })
       </div>
       <div className="section-card cost-result-card">
         <div className="cost-result-title"><CircleDollarSign size={24}/><div><span>Modelo</span><h3>{model || "Sin modelo"}</h3></div></div>
-        {canAttachToQuote && <div className="cost-selection-help"><CheckCircle2 size={17}/><span><strong>Elige qué deseas cotizar.</strong> Marca solamente una o dos partes; el calentador completo no se agregará automáticamente.</span></div>}
-        <table className="cost-table"><thead><tr>{canAttachToQuote && <th>Agregar</th>}<th>Producto</th><th>%</th><th>Base</th><th>Costo</th></tr></thead><tbody>{calculatedParts.map(part => <tr key={part.id}>{canAttachToQuote && <td><input type="checkbox" checked={selectedParts.includes(part.id)} disabled={!selectedParts.includes(part.id) && selectedParts.length >= 2} onChange={() => togglePart(part.id)} aria-label={`Agregar ${part.name}`}/></td>}<td>{part.name}</td><td>{Number(part.percentage || 0).toFixed(2)}%</td><td>{fmtMoney(numericPrice)}</td><td><strong>{fmtMoney(part.cost)}</strong></td></tr>)}</tbody></table>
-        {canAttachToQuote && <div className="cost-quote-attach"><div className="privacy-note"><ShieldCheck size={16}/><span>Autorizado para Leyla, Ligia y Samuel. Selecciona una o máximo dos partes.</span></div><label className="field-label">Cotización donde se agregarán las partes</label><select className="input" value={selectedQuoteId} onChange={e => { setSelectedQuoteId(e.target.value); setAttachedMessage(""); }}><option value="">Seleccionar cotización</option>{visibleQuotes.map(quote => <option key={quote.id} value={quote.id}>{quote.numero || "Sin número"} · {quote.contactoNombre || "Sin contacto"}</option>)}</select><button className="btn-primary" disabled={!selectedQuoteId || !selectedParts.length} onClick={attachParts}><Plus size={16}/> Agregar {selectedParts.length || ""} parte{selectedParts.length === 1 ? "" : "s"} a cotización</button>{selectedParts.length >= 2 && <small>Ya seleccionaste el máximo de dos partes.</small>}{attachedMessage && <p className="form-success">{attachedMessage}</p>}</div>}
-        <div className="cost-summary-row"><span>Subtotal de partes</span><strong>{fmtMoney(componentTotal)}</strong></div>
+        <div className="cost-selection-note"><CheckCircle2 size={16}/><span>Marca una o máximo dos partes. El total incluirá únicamente las seleccionadas y los costos adicionales que ingreses.</span></div>
+        <table className="cost-table"><thead><tr><th>Sumar</th><th>Producto</th><th>%</th><th>Base</th><th>Costo</th></tr></thead><tbody>{calculatedParts.map(part => <tr key={part.id} className={selectedParts.includes(part.id) ? "selected-cost-part" : ""}><td><input type="checkbox" checked={selectedParts.includes(part.id)} disabled={!selectedParts.includes(part.id) && selectedParts.length >= 2} onChange={() => togglePart(part.id)} aria-label={`Sumar ${part.name}`}/></td><td>{part.name}</td><td>{Number(part.percentage || 0).toFixed(2)}%</td><td>{fmtMoney(numericPrice)}</td><td><strong>{fmtMoney(part.cost)}</strong></td></tr>)}</tbody></table>
+        <div className="cost-summary-row"><span>Subtotal de partes seleccionadas</span><strong>{fmtMoney(selectedComponentTotal)}</strong></div>
         <div className="cost-summary-row"><span>Flete / Electroválvula</span><strong>{fmtMoney(Number(freight) || 0)}</strong></div>
         <div className="cost-summary-row"><span>Filtro</span><strong>{fmtMoney(Number(filter) || 0)}</strong></div>
         <div className="cost-summary-row"><span>Otros</span><strong>{fmtMoney(Number(other) || 0)}</strong></div>
-        <div className="cost-grand-total"><span>Costo total calculado</span><strong>{fmtMoney(grandTotal)}</strong></div>
+        <div className="cost-grand-total"><span>Total de la selección</span><strong>{fmtMoney(grandTotal)}</strong></div>
         <small>El cálculo se guarda automáticamente en este dispositivo.</small>
       </div>
     </div>
@@ -633,9 +604,14 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
     permisoPromociones: "Pendiente de confirmar", notas: "", fecha: todayISO(),
   };
   const [form, setForm] = useState(() => readDraft(draftKey, defaultForm));
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
-  const saveContact = () => { clearDraft(draftKey); onSave(form); };
+  const saveContact = async () => {
+    try { setSaving(true); await onSave(form); clearDraft(draftKey); }
+    catch (error) { console.error("No se pudo guardar el contacto:", error); }
+    finally { setSaving(false); }
+  };
 
   return (
     <div className="modal-overlay">
@@ -718,7 +694,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cerrar</button>
-          <button className="btn-primary" disabled={!form.nombre.trim()} onClick={saveContact}>Guardar contacto</button>
+          <button className="btn-primary" disabled={!form.nombre.trim() || saving} onClick={saveContact}>{saving ? "Guardando…" : "Guardar contacto"}</button>
         </div>
       </div>
     </div>
@@ -726,6 +702,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
 }
 
 function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSave, onClose }) {
+  const itemEditorRef = useRef(null);
   const draftKey = `casasolar:draft:cotizacion:${initial?.id || initialContactId || "nueva"}`;
   const pendingTransportKey = `casasolar:transportePendiente:${vendedor}`;
   const savedDraft = useMemo(() => readDraft(draftKey, {}), [draftKey]);
@@ -745,6 +722,8 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const [promocion, setPromocion] = useState(savedDraft.promocion ?? initial?.promocion ?? "");
   const [garantiaAnios, setGarantiaAnios] = useState(savedDraft.garantiaAnios ?? initial?.garantiaAnios ?? String(initial?.garantia || "").replace(/[^0-9]/g, ""));
   const [editingItemId, setEditingItemId] = useState(savedDraft.editingItemId || null);
+  const [itemMessage, setItemMessage] = useState("");
+  const [saving, setSaving] = useState(false);
   const [pendingTransport, setPendingTransport] = useState(() => initial ? null : readDraft(pendingTransportKey, null));
   const clienteSeleccionado = contactos.find(c => c.id === contactoId);
   const esEstructura = String(prod).startsWith("estructura_");
@@ -753,15 +732,25 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   useEffect(() => {
     saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
   }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
-  const saveQuote = () => {
-    clearDraft(draftKey);
+  const saveQuote = async () => {
     const commercial = { promocion: promocion.trim(), garantiaAnios: Number(garantiaAnios) || "", garantia: garantiaAnios ? `${Number(garantiaAnios)} años` : "" };
-    onSave(initial ? { ...initial, contactoId, items, total, estado, notas, ...commercial } : { contactoId, items, total, estado, notas, ...commercial, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] });
+    try {
+      setSaving(true);
+      await onSave(initial ? { ...initial, contactoId, items, total, estado, notas, ...commercial } : { contactoId, items, total, estado, notas, ...commercial, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] });
+      clearDraft(draftKey);
+    } catch (error) {
+      console.error("No se pudo guardar la cotización:", error);
+      window.alert("No se pudo guardar la cotización en Firebase. El borrador se conserva; revisa la conexión e inténtalo nuevamente.");
+    } finally { setSaving(false); }
   };
 
   const addItem = () => {
     const p = Number(precio);
-    if (precio === "" || Number.isNaN(p) || p < 0) return;
+    if (precio === "" || Number.isNaN(p) || p < 0) {
+      setItemMessage("Escribe un precio cotizado válido antes de guardar el producto.");
+      return;
+    }
+    const wasEditing = Boolean(editingItemId);
     const nextItem = {
       id: uid(), productoId: prod, productoNombre: productoNombre(prod), categoria,
       descripcion: descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
@@ -773,6 +762,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
       : [...list, nextItem]);
     setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
     setDescripcion(productoNombre(prod)); setEditingItemId(null);
+    setItemMessage(wasEditing ? "Producto actualizado. Para finalizar, pulsa “Guardar cambios” al pie de la cotización." : "Producto agregado a la cotización.");
   };
 
   const editItem = (item) => {
@@ -781,6 +771,12 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
     setTamano(item.tamano || ""); setCant(item.cantidad || 1);
     setAltura(item.altura || ""); setCompatibilidad(item.compatibilidad || "");
     setPrecioLista(item.precioLista ?? item.precioUnitario ?? ""); setPrecio(item.precioUnitario ?? item.precio ?? "");
+    setItemMessage("Editando este producto: modifica los campos y pulsa “Actualizar producto”.");
+    window.requestAnimationFrame(() => itemEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const cancelItemEdit = () => {
+    setEditingItemId(null); setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
+    setDescripcion(productoNombre(prod)); setItemMessage("");
   };
   const addPendingTransport = () => {
     if (!pendingTransport) return;
@@ -813,7 +809,9 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
 
           {pendingTransport && <div className="pending-transport-card"><div><ShoppingCart size={17} /><span><strong>Transporte calculado pendiente</strong><small>Importe: {fmtMoney(pendingTransport.precioUnitario)}. Los kilómetros y la tarifa permanecerán internos.</small></span></div><button className="btn-primary" onClick={addPendingTransport}><Plus size={16} /> Agregar a esta cotización</button></div>}
 
-          <label className="field-label">Agregar producto o servicio</label>
+          <div ref={itemEditorRef} className={editingItemId ? "quote-item-editor editing" : "quote-item-editor"}>
+          <label className="field-label">{editingItemId ? "Editar producto seleccionado" : "Agregar producto o servicio"}</label>
+          {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Los datos del producto están cargados abajo. Realiza los cambios y pulsa <strong>Actualizar producto</strong>.</span></div>}
           <div className="item-row quote-item-grid">
             <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {CATALOGO.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -823,24 +821,27 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
-            <button className="btn-ghost small" onClick={addItem}>{editingItemId ? <><CheckCircle2 size={14} /> Actualizar</> : <><Plus size={14} /> Agregar</>}</button>
+            <button type="button" className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{editingItemId ? <><CheckCircle2 size={14} /> Actualizar producto</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
           <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
+          {editingItemId && <button type="button" className="btn-ghost small cancel-item-edit" onClick={cancelItemEdit}><X size={14}/> Cancelar edición</button>}
+          {itemMessage && <p className={itemMessage.startsWith("Escribe") ? "form-error" : "form-success"}>{itemMessage}</p>}
+          </div>
 
           {items.length > 0 && (
             <table className="table small">
               <thead><tr><th>Producto</th><th>Categoría</th><th>Tamaño</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead>
               <tbody>
                 {items.map(it => (
-                  <tr key={it.id}>
+                  <tr key={it.id} className={editingItemId === it.id ? "editing-row" : ""}>
                     <td>{nombreItem(it)}</td>
                     <td>{it.categoria || categoriaProducto(it.productoId)}</td>
                     <td>{[it.tamano, it.altura && `Altura: ${it.altura}`, it.compatibilidad && `Para: ${it.compatibilidad}`].filter(Boolean).join(" · ") || "—"}</td>
                     <td>{it.cantidad}</td>
                     <td>{fmtMoney(it.precioUnitario)}</td>
                     <td>{fmtMoney(it.cantidad * it.precioUnitario)}</td>
-                    <td><div className="row"><button className="icon-btn" title="Editar producto" onClick={() => editItem(it)}><Edit3 size={14} /></button><button className="icon-btn" title="Eliminar producto" onClick={() => setItems(l => l.filter(x => x.id !== it.id))}><Trash2 size={14} /></button></div></td>
+                    <td><div className="row"><button type="button" className="icon-btn" aria-label={`Editar ${nombreItem(it)}`} title="Editar producto" onClick={() => editItem(it)}><Edit3 size={14} /></button><button type="button" className="icon-btn" title="Eliminar producto" onClick={() => setItems(l => l.filter(x => x.id !== it.id))}><Trash2 size={14} /></button></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -866,9 +867,9 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cerrar</button>
-          <button className="btn-primary" disabled={!contactoId || items.length === 0}
+          <button className="btn-primary" disabled={!contactoId || items.length === 0 || saving}
             onClick={saveQuote}>
-            {initial ? "Guardar cambios" : "Guardar cotización"}
+            {saving ? "Guardando…" : (initial ? "Guardar cambios" : "Guardar cotización")}
           </button>
         </div>
       </div>
@@ -1277,11 +1278,11 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
           window.alert(`No se pudo generar la orden PDF. ${error?.message || "Inténtalo nuevamente."}`);
         }
       }} />}
-      {showEdit && <CotizacionModal contactos={[contacto].filter(Boolean)} initialContactId={cotizacion.contactoId} vendedor={cotizacion.vendedor} initial={cotizacion} onClose={() => setShowEdit(false)} onSave={(updated) => {
+      {showEdit && <CotizacionModal contactos={[contacto].filter(Boolean)} initialContactId={cotizacion.contactoId} vendedor={cotizacion.vendedor} initial={cotizacion} onClose={() => setShowEdit(false)} onSave={async (updated) => {
         if (cotizacion.descuentoAutorizado) {
           const invalidatedAt = new Date().toISOString();
           const invalidatedBy = currentUser?.displayName || currentUser?.email || "Usuario";
-          onUpdate({
+          await onUpdate({
             ...updated,
             totalOriginal: updated.total,
             descuentoAutorizado: null,
@@ -1293,7 +1294,7 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
           });
           alert("La cotización cambió. El descuento anterior quedó guardado en el historial y deberá autorizarse nuevamente.");
         } else {
-          onUpdate(updated);
+          await onUpdate(updated);
         }
         setShowEdit(false);
       }} />}
@@ -1387,9 +1388,9 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
 
       {showModal && (
         <ContactModal vendedores={vendedores} currentUser={currentUser} onClose={() => setShowModal(false)}
-          onSave={(form) => { onAdd(form); setShowModal(false); }} />
+          onSave={async (form) => { await onAdd(form); setShowModal(false); }} />
       )}
-      {showImport && <ExcelImportModal contactos={currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={(rows, mode) => { onImport(rows, mode); setShowImport(false); }} />}
+      {showImport && <ExcelImportModal contactos={currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
     </div>
   );
 }
@@ -1475,11 +1476,11 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
 
       {modal === "cotizacion" && (
         <CotizacionModal contactos={[contacto]} initialContactId={contacto.id} vendedor={contacto.vendedor}
-          onClose={() => setModal(null)} onSave={(data) => { onAddCotizacion(data); setModal(null); }} />
+          onClose={() => setModal(null)} onSave={async (data) => { await onAddCotizacion(data); setModal(null); }} />
       )}
       {modal === "editar-contacto" && (
         <ContactModal initial={contacto} vendedores={vendedores} currentUser={currentUser}
-          onClose={() => setModal(null)} onSave={(updated) => { onUpdateContacto(updated); setModal(null); }} />
+          onClose={() => setModal(null)} onSave={async (updated) => { await onUpdateContacto(updated); setModal(null); }} />
       )}
       {modal === "seguimiento" && (
         <SeguimientoModal contactos={[contacto]} initialContactId={contacto.id} vendedor={contacto.vendedor}
@@ -1545,7 +1546,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
       )}
       {showModal && (
         <CotizacionModal contactos={contactos} vendedor={currentUser.nombre}
-          onClose={() => setShowModal(false)} onSave={(data) => { onAdd(data); setShowModal(false); }} />
+          onClose={() => setShowModal(false)} onSave={async (data) => { await onAdd(data); setShowModal(false); }} />
       )}
     </div>
   );
@@ -1936,7 +1937,8 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
     if (seller !== "todos" && quote.vendedor !== seller) return false;
     return inPeriod(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha);
   });
-  const advances = cotizaciones.filter(quote => quote.ordenPedido?.fechaAnticipo && Number(quote.ordenPedido?.abono || 0) > 0 && inPeriod(quote.ordenPedido.fechaAnticipo) && (currentUser.rol === "Jefe" || quote.vendedor === currentUser.nombre) && (seller === "todos" || quote.vendedor === seller));
+  const advanceDate = quote => quote.ordenPedido?.fechaAnticipo || quote.ordenPedido?.actualizadoEn || quote.fechaVenta || quote.fecha;
+  const advances = cotizaciones.filter(quote => Number(quote.ordenPedido?.abono || 0) > 0 && inPeriod(advanceDate(quote)) && (currentUser.rol === "Jefe" || quote.vendedor === currentUser.nombre) && (seller === "todos" || quote.vendedor === seller));
   const advanceAmount = advances.reduce((sum, quote) => sum + Number(quote.ordenPedido?.abono || 0), 0);
   const total = sold.reduce((sum, quote) => sum + Number(quote.total || 0), 0);
   const average = sold.length ? total / sold.length : 0;
@@ -1962,8 +1964,18 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
     productMap[key].quantity += Number(item.cantidad || 0); productMap[key].total += Number(item.cantidad || 0) * Number(item.precioUnitario || 0);
   }));
   const productRows = Object.values(productMap).sort((a,b) => b.total - a.total);
+  const categoriesOf = quote => [...new Set((quote.items || []).filter(item => item.productoId !== "transporte_ruta").map(item => item.categoria || categoriaProducto(item.productoId)))];
+  const categoryMap = {};
+  sold.forEach(quote => (quote.items || []).filter(item => item.productoId !== "transporte_ruta").forEach(item => {
+    const category = item.categoria || categoriaProducto(item.productoId);
+    if (!categoryMap[category]) categoryMap[category] = { category, quantity: 0, total: 0, sales: new Set() };
+    categoryMap[category].quantity += Number(item.cantidad || 0);
+    categoryMap[category].total += Number(item.cantidad || 0) * Number(item.precioUnitario || 0);
+    categoryMap[category].sales.add(quote.id);
+  }));
+  const categoryRows = Object.values(categoryMap).map(row => ({ ...row, sales: row.sales.size })).sort((a,b) => b.total - a.total);
   return <div className="sales-report printable-report">
-    <div className="page-head report-head"><div><h2>Reportes de ventas</h2><p>Incluye cotizaciones aceptadas y órdenes con pago “Cancelado”.</p></div><button className="btn-primary" onClick={() => window.print()}><Download size={16} /> Imprimir o guardar PDF</button></div>
+    <div className="page-head report-head"><div><h2>Reportes de ventas</h2><p>Incluye ventas cerradas y anticipos de calentadores solares, iluminación, accesorios, servicios y las demás categorías registradas.</p></div><button className="btn-primary" onClick={() => window.print()}><Download size={16} /> Imprimir o guardar PDF</button></div>
     <div className="section-card report-filters">
       <label><span className="field-label">Periodo</span><select className="input" value={periodType} onChange={e => setPeriodType(e.target.value)}><option>Mes</option><option>Año</option><option>Rango de fechas</option></select></label>
       {periodType === "Mes" && <label><span className="field-label">Mes</span><input className="input" type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>}
@@ -1974,9 +1986,10 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
     <div className="kpi-grid report-kpis"><div className="kpi-card"><div className="kpi-label">Ventas cerradas</div><div className="kpi-value">{sold.length}</div></div><div className="kpi-card"><div className="kpi-label">Monto vendido</div><div className="kpi-value">{fmtMoney(total)}</div></div><div className="kpi-card"><div className="kpi-label">Anticipos logrados</div><div className="kpi-value">{advances.length}</div><small>{fmtMoney(advanceAmount)} recibidos</small></div><div className="kpi-card"><div className="kpi-label">Venta promedio</div><div className="kpi-value">{fmtMoney(average)}</div></div><div className="kpi-card"><div className="kpi-label">Mejor vendedor</div><div className="kpi-value report-name">{sellerRows[0]?.name || "Sin ventas"}</div></div></div>
     <div className="section-card"><h3>Rendimiento del periodo</h3>{chartData.length === 0 ? <div className="empty-state">No hay ventas cerradas en el periodo seleccionado.</div> : <div className="sales-chart">{chartData.map(item => <div className="sales-bar-row" key={item.label}><span>{item.label}</span><div className="sales-bar-track"><div className="sales-bar" style={{ width: `${Math.max(3, item.value / maxChart * 100)}%` }} /></div><strong>{fmtMoney(item.value)}</strong></div>)}</div>}</div>
     {currentUser.rol === "Jefe" && <div className="section-card"><h3>Ventas por vendedor</h3><table className="table"><thead><tr><th>Vendedor</th><th>Ventas</th><th>Monto total</th><th>Participación</th></tr></thead><tbody>{sellerRows.map(row => <tr key={row.name}><td>{row.name}</td><td>{row.count}</td><td>{fmtMoney(row.total)}</td><td>{total ? `${(row.total / total * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div>}
+    <div className="section-card"><h3>Resumen de ventas cerradas por categoría</h3>{categoryRows.length === 0 ? <div className="empty-state">No hay ventas cerradas en el periodo seleccionado.</div> : <table className="table"><thead><tr><th>Categoría</th><th>Ventas</th><th>Unidades</th><th>Monto vendido</th></tr></thead><tbody>{categoryRows.map(row => <tr key={row.category}><td>{row.category}</td><td>{row.sales}</td><td>{row.quantity}</td><td>{fmtMoney(row.total)}</td></tr>)}</tbody></table>}</div>
     <div className="section-card"><h3>Productos vendidos por producto y categoría</h3><table className="table"><thead><tr><th>Categoría</th><th>Producto</th><th>Unidades</th><th>Monto vendido</th></tr></thead><tbody>{productRows.map(row => <tr key={`${row.category}-${row.product}`}><td>{row.category}</td><td>{row.product}</td><td>{row.quantity}</td><td>{fmtMoney(row.total)}</td></tr>)}</tbody></table></div>
-    <div className="section-card"><h3>Detalle de ventas</h3><table className="table"><thead><tr><th>Fecha</th><th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>Estado</th><th>Total</th></tr></thead><tbody>{sold.map(quote => <tr key={quote.id}><td>{fmtDate(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha)}</td><td>{quote.numero}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{quote.ordenPedido?.estadoPago === "Cancelado" ? "Cancelado" : "Aceptada"}</td><td>{fmtMoney(quote.total)}</td></tr>)}</tbody></table></div>
-    <div className="section-card advances-section"><div className="section-title"><ShoppingCart size={18}/><div><h3>Anticipos recibidos</h3><p>Se muestran después de las ventas completas y cerradas.</p></div></div>{advances.length === 0 ? <div className="empty-state">No hay anticipos registrados en el periodo seleccionado.</div> : <><table className="table"><thead><tr><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Orden / Cotización</th><th>Total de venta</th><th>Anticipo</th><th>Saldo</th></tr></thead><tbody>{advances.map(quote => <tr key={quote.id}><td>{fmtDate(quote.ordenPedido.fechaAnticipo)}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{quote.vendedor}</td><td>{quote.ordenNumero || quote.numero}</td><td>{fmtMoney(quote.total)}</td><td><strong>{fmtMoney(quote.ordenPedido.abono)}</strong></td><td>{fmtMoney(quote.ordenPedido.saldo || Math.max(0, Number(quote.total || 0) - Number(quote.ordenPedido.abono || 0)))}</td></tr>)}</tbody><tfoot><tr><th colSpan="5">Total de anticipos</th><th>{fmtMoney(advanceAmount)}</th><th></th></tr></tfoot></table></>}</div>
+    <div className="section-card"><h3>Detalle de ventas cerradas</h3><table className="table"><thead><tr><th>Fecha</th><th>Cotización</th><th>Cliente</th><th>Categoría</th><th>Vendedor</th><th>Estado</th><th>Total</th></tr></thead><tbody>{sold.map(quote => <tr key={quote.id}><td>{fmtDate(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha)}</td><td>{quote.numero}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{categoriesOf(quote).join(", ") || "Otros"}</td><td>{quote.vendedor}</td><td>{quote.ordenPedido?.estadoPago === "Cancelado" ? "Cancelado" : "Aceptada"}</td><td>{fmtMoney(quote.total)}</td></tr>)}</tbody></table></div>
+    <div className="section-card advances-section"><div className="section-title"><ShoppingCart size={18}/><div><h3>Anticipos recibidos</h3><p>Incluye cualquier orden con un abono mayor a cero, sin importar la categoría.</p></div></div>{advances.length === 0 ? <div className="empty-state">No hay anticipos registrados en el periodo seleccionado.</div> : <><table className="table"><thead><tr><th>Fecha</th><th>Cliente</th><th>Categoría</th><th>Productos / servicios</th><th>Vendedor</th><th>Orden / Cotización</th><th>Total de venta</th><th>Anticipo</th><th>Saldo</th></tr></thead><tbody>{advances.map(quote => <tr key={quote.id}><td>{fmtDate(advanceDate(quote))}</td><td>{quote.contactoNombre || quote.cliente?.nombre || "—"}</td><td>{categoriesOf(quote).join(", ") || "Otros"}</td><td>{(quote.items || []).filter(item => item.productoId !== "transporte_ruta").map(nombreItem).join(", ") || "—"}</td><td>{quote.vendedor}</td><td>{quote.ordenNumero || quote.numero}</td><td>{fmtMoney(quote.total)}</td><td><strong>{fmtMoney(quote.ordenPedido.abono)}</strong></td><td>{fmtMoney(quote.ordenPedido.saldo || Math.max(0, Number(quote.total || 0) - Number(quote.ordenPedido.abono || 0)))}</td></tr>)}</tbody><tfoot><tr><th colSpan="7">Total de anticipos</th><th>{fmtMoney(advanceAmount)}</th><th></th></tr></tfoot></table></>}</div>
   </div>;
 }
 
@@ -2044,13 +2057,14 @@ export default function CasaSolarCRM() {
         const match = String(item.numero || "").match(/^CS-(\d{4})-(\d+)$/);
         if (match) counters[match[1]] = Math.max(counters[match[1]] || 0, Number(match[2]));
       });
-      let repairedNumbers = false;
+      const numberRepairs = [];
       const normalizedQuotes = loadedQuotes.map(item => {
         if (item.numero) return item;
         const year = String(item.fecha || todayISO()).slice(0, 4);
         counters[year] = (counters[year] || 0) + 1;
-        repairedNumbers = true;
-        return { ...item, numero: `CS-${year}-${String(counters[year]).padStart(4, "0")}` };
+        const numero = `CS-${year}-${String(counters[year]).padStart(4, "0")}`;
+        numberRepairs.push({ id: item.id, numero });
+        return { ...item, numero };
       });
       const normalizedDiscounts = Array.isArray(discountQueue) ? [...discountQueue] : [];
       const loadedFollowups = Array.isArray(s) ? [...s] : [];
@@ -2095,7 +2109,7 @@ export default function CasaSolarCRM() {
         await storageSet("casasolar:campaigns", loadedCampaigns, true);
         await savePublicCampaign(DEFAULT_CAMPAIGN);
       }
-      if (repairedNumbers) await storageSet("casasolar:cotizaciones", normalizedQuotes, true);
+      if (numberRepairs.length) await upsertSharedDataRecords("casasolar:cotizaciones", numberRepairs);
       if (repairedDiscounts) await storageSet("casasolar:descuentos", normalizedDiscounts, true);
       if (!linkedSeller) {
         const updated = [...sellerList, { id: uid(), nombre: profile.nombre, uid: profile.uid, email: profile.email }];
@@ -2138,8 +2152,6 @@ export default function CasaSolarCRM() {
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
-  const persistContactos = (list) => { setContactos(list); storageSet("casasolar:contactos", list, true); };
-  const persistCotizaciones = (list) => { setCotizaciones(list); storageSet("casasolar:cotizaciones", list, true); };
   const persistSeguimientos = (list) => { setSeguimientos(list); storageSet("casasolar:seguimientos", list, true); };
   const persistCampaigns = (list) => { setCampaigns(list); storageSet("casasolar:campaigns", list, true); };
 
@@ -2151,30 +2163,44 @@ export default function CasaSolarCRM() {
     setSelectedId(null);
   };
 
-  const addContacto = (form) => persistContactos([{ ...form, id: uid() }, ...contactos]);
-  const importContactos = (rows, mode) => {
+  const addContacto = async (form) => {
+    const record = { ...form, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
+    setContactos(current => [record, ...current]);
+    try { setContactos(await upsertSharedDataRecords("casasolar:contactos", record)); }
+    catch (error) { setContactos(current => current.filter(item => item.id !== record.id)); window.alert("No se pudo guardar el contacto en Firebase. Revisa la conexión e inténtalo nuevamente."); throw error; }
+  };
+  const importContactos = async (rows, mode) => {
     const phone = value => String(value || "").replace(/\D/g, "").replace(/^502/, "");
     const name = value => String(value || "").trim().toLowerCase();
     const next = [...contactos];
     let added = 0, updated = 0, skipped = 0;
+    const changedRecords = [];
     rows.forEach(row => {
       const index = next.findIndex(item => (phone(row.telefono) && phone(item.telefono) === phone(row.telefono)) || name(item.nombre) === name(row.nombre));
-      if (index < 0) { next.unshift({ ...row, id: uid() }); added += 1; return; }
+      if (index < 0) { const record = { ...row, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
       const canUpdate = currentUser.rol === "Jefe" || next[index].vendedor === currentUser.nombre;
       if (!canUpdate) { skipped += 1; return; }
       if (mode === "update") {
         const available = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== "" && value != null));
         next[index] = { ...next[index], ...available, id: next[index].id };
+        changedRecords.push(next[index]);
         updated += 1;
       } else skipped += 1;
     });
-    persistContactos(next);
-    window.alert(`Importación terminada: ${added} nuevos, ${updated} actualizados y ${skipped} omitidos.`);
+    try {
+      if (changedRecords.length) setContactos(await upsertSharedDataRecords("casasolar:contactos", changedRecords));
+      window.alert(`Importación terminada: ${added} nuevos, ${updated} actualizados y ${skipped} omitidos.`);
+    } catch (error) {
+      console.error("No se pudo guardar la importación:", error);
+      window.alert("No se pudo guardar la importación en Firebase. Conserva el archivo original e inténtalo nuevamente cuando la conexión sea estable.");
+      throw error;
+    }
   };
-  const updateContacto = (updated) => {
-    persistContactos(contactos.map(c => c.id === updated.id ? updated : c));
+  const updateContacto = async (updated) => {
+    setContactos(await upsertSharedDataRecords("casasolar:contactos", updated));
     const cliente = { id: updated.id, nombre: updated.nombre || "", telefono: updated.telefono || "", email: updated.email || "", dpi: updated.dpi || "", nit: updated.nit || "C/F", direccion: updated.direccion || "", municipio: updated.municipio || "", departamento: updated.departamento || "" };
-    persistCotizaciones(cotizaciones.map(q => q.contactoId === updated.id ? { ...q, contactoNombre: updated.nombre, cliente } : q));
+    const linkedQuotes = cotizaciones.filter(q => q.contactoId === updated.id).map(q => ({ ...q, contactoNombre: updated.nombre, cliente }));
+    if (linkedQuotes.length) setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", linkedQuotes));
   };
   const deleteContactoDefinitivo = async (contacto) => {
     const linkedQuotes = cotizaciones.filter(item => item.contactoId === contacto.id).length;
@@ -2196,20 +2222,18 @@ export default function CasaSolarCRM() {
   };
   const assignContactos = async (ids, seller) => {
     const selectedIds = new Set(ids);
-    persistContactos(contactos.map(item => selectedIds.has(item.id) ? { ...item, vendedor: seller } : item));
-    persistCotizaciones(cotizaciones.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
+    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, vendedor: seller }));
+    const quoteChanges = cotizaciones.filter(item => selectedIds.has(item.contactoId)).map(item => ({ ...item, vendedor: seller }));
+    if (contactChanges.length) setContactos(await upsertSharedDataRecords("casasolar:contactos", contactChanges));
+    if (quoteChanges.length) setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", quoteChanges));
     const followupIds = seguimientos.filter(item => selectedIds.has(item.contactoId)).map(item => item.id);
     setSeguimientos(current => current.map(item => selectedIds.has(item.contactoId) ? { ...item, vendedor: seller } : item));
     if (followupIds.length) await updateSharedDataRecords("casasolar:seguimientos", followupIds, { vendedor: seller });
     window.alert(`${ids.length} cliente${ids.length === 1 ? "" : "s"} asignado${ids.length === 1 ? "" : "s"} a ${seller}.`);
   };
-  const addCotizacion = (data) => {
+  const addCotizacion = async (data) => {
     const contacto = contactos.find(c => c.id === data.contactoId);
     const year = new Date().getFullYear();
-    const max = cotizaciones
-      .filter(c => String(c.numero || "").startsWith(`CS-${year}-`))
-      .reduce((value, c) => Math.max(value, Number(String(c.numero).split("-").pop()) || 0), 0);
-    const numero = `CS-${year}-${String(max + 1).padStart(4, "0")}`;
     const validDate = new Date(`${data.fecha}T12:00:00`);
     validDate.setDate(validDate.getDate() + 30);
     const cliente = contacto ? {
@@ -2217,17 +2241,21 @@ export default function CasaSolarCRM() {
       email: contacto.email || "", dpi: contacto.dpi || "", nit: contacto.nit || "C/F",
       direccion: contacto.direccion || "", municipio: contacto.municipio || "", departamento: contacto.departamento || "",
     } : null;
-    persistCotizaciones([{ ...data, id: uid(), numero, validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre, cliente }, ...cotizaciones]);
+    const quote = { ...data, id: uid(), validaHasta: validDate.toISOString().slice(0, 10), contactoNombre: contacto?.nombre, cliente, creadoPorEmail: currentUser.email || "" };
+    const created = await appendSharedQuote("casasolar:cotizaciones", quote, year);
+    setCotizaciones(current => current.some(item => item.id === created.id) ? current : [created, ...current]);
   };
-  const updateCotizacionEstado = (id, estado) => persistCotizaciones(cotizaciones.map(c => c.id === id ? { ...c, estado, fechaVenta: estado === "Aceptada" ? (c.fechaVenta || todayISO()) : c.fechaVenta } : c));
+  const updateCotizacionEstado = async (id, estado) => {
+    const quote = cotizaciones.find(c => c.id === id);
+    if (!quote) return;
+    setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", { ...quote, estado, fechaVenta: estado === "Aceptada" ? (quote.fechaVenta || todayISO()) : quote.fechaVenta }));
+  };
   const updateCotizacion = async (updated) => {
     const shared = await storageGet("casasolar:cotizaciones", true);
     const source = Array.isArray(shared) ? shared : cotizaciones;
     const previousQuote = source.find(item => item.id === updated.id);
-    const next = source.map(c => {
-      if (c.id !== updated.id) return c;
-      const discount = updated.descuentoAutorizado;
-      const syncedOrder = updated.ordenPedido && discount ? {
+    const discount = updated.descuentoAutorizado;
+    const syncedOrder = updated.ordenPedido && discount ? {
         ...updated.ordenPedido,
         descuentoAutorizadoMonto: discount.monto,
         descuentoAutorizadoTipo: discount.tipo,
@@ -2238,10 +2266,9 @@ export default function CasaSolarCRM() {
         totalConDescuento: updated.total,
         saldo: updated.ordenPedido.estadoPago === "Cancelado" ? "0" : String(Math.max(0, Number(updated.total || 0) - Number(updated.ordenPedido.abono || 0))),
       } : updated.ordenPedido;
-      return { ...updated, ordenPedido: syncedOrder, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || c.fechaVenta || todayISO()) : updated.fechaVenta };
-    });
+    const record = { ...updated, ordenPedido: syncedOrder, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO()) : updated.fechaVenta };
+    const next = await upsertSharedDataRecords("casasolar:cotizaciones", record);
     setCotizaciones(next);
-    await storageSet("casasolar:cotizaciones", next, true);
     const previousInstallationDate = previousQuote?.ordenPedido?.fechaInstalacion || "";
     const installationDate = updated.ordenPedido?.fechaInstalacion || "";
     if (installationDate && installationDate !== previousInstallationDate && updated.contactoId) {
@@ -2311,8 +2338,10 @@ export default function CasaSolarCRM() {
     persistVendedores(vendedores.map(v => v.id === saved.id ? saved : v));
     if (saved.uid) await updateCRMUserProfile(saved.uid, { nombre: saved.nombre, rol: saved.rol, roles: saved.roles, telefono: saved.telefono || "", departamentosCobertura: saved.departamentosCobertura || "", usuarioEspecial: Boolean(saved.usuarioEspecial) }, currentUser.nombre);
     if (oldName && oldName !== newName) {
-      persistContactos(contactos.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
-      persistCotizaciones(cotizaciones.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
+      const contactChanges = contactos.filter(item => item.vendedor === oldName).map(item => ({ id: item.id, vendedor: newName }));
+      const quoteChanges = cotizaciones.filter(item => item.vendedor === oldName).map(item => ({ id: item.id, vendedor: newName }));
+      if (contactChanges.length) setContactos(await upsertSharedDataRecords("casasolar:contactos", contactChanges));
+      if (quoteChanges.length) setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", quoteChanges));
       const followupIds = seguimientos.filter(item => item.vendedor === oldName).map(item => item.id);
       setSeguimientos(current => current.map(item => item.vendedor === oldName ? { ...item, vendedor: newName } : item));
       if (followupIds.length) await updateSharedDataRecords("casasolar:seguimientos", followupIds, { vendedor: newName });
@@ -2420,7 +2449,7 @@ export default function CasaSolarCRM() {
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
             )}
             {tab === "calculadora" && <RouteCalculator cotizaciones={cotizaciones} currentUser={currentUser} onUpdateCotizacion={updateCotizacion} />}
-            {tab === "calculadora-costos" && <HeaterCostCalculator cotizaciones={cotizaciones} currentUser={currentUser} onUpdateCotizacion={updateCotizacion} />}
+            {tab === "calculadora-costos" && <HeaterCostCalculator />}
             {tab === "contactos" && !selectedContact && (
               <ContactosView contactos={contactos} vendedores={vendedores} currentUser={currentUser}
                 onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onOpen={setSelectedId} />
@@ -2611,7 +2640,13 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .item-row .price { width:100px; }
 .total-line { text-align:right; font-size:15px; padding:8px 0; font-family:'IBM Plex Mono',monospace; }
 .quote-item-grid { display:grid; grid-template-columns: 1.2fr 1.2fr 1fr 70px 110px 110px auto; align-items:start; }
-.quote-item-grid .input, .quote-item-grid .btn-ghost { width:100%; margin-bottom:8px; }
+.quote-item-grid .input, .quote-item-grid .btn-ghost, .quote-item-grid .btn-primary { width:100%; margin-bottom:8px; }
+.quote-item-editor { scroll-margin-top:18px; border-radius:10px; transition:background .2s,border-color .2s; }
+.quote-item-editor.editing { background:#FFF8E7; border:1px solid #EDC96C; padding:12px; margin-bottom:12px; }
+.edit-product-banner { display:flex; align-items:flex-start; gap:8px; color:#6E4E00; background:#FFF1C2; border-radius:8px; padding:9px 10px; margin:7px 0 11px; font-size:12px; }
+.edit-product-banner svg { flex-shrink:0; }
+.cancel-item-edit { margin:0 0 10px; }
+.table tr.editing-row td { background:#FFF4CF; }
 .quote-category-row { display:flex; align-items:center; gap:12px; margin:-3px 0 12px; }
 .quote-category-row label { width:240px; flex-shrink:0; }
 .quote-category-row .input { margin-bottom:0; }
@@ -2648,6 +2683,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .user-access-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 12px; }
 .user-access-grid label:last-child { grid-column:1/-1; }
 .form-success { color:#27500A; background:#EAF3DE; padding:9px 11px; border-radius:8px; margin:0 0 12px; }
+.form-error { color:#8A1C1C; background:#FDECEC; padding:9px 11px; border-radius:8px; margin:0 0 12px; }
 .draft-note { display:block; color:#64820F; font-size:10.5px; margin-top:3px; }
 .order-evaluation-summary { background:#F7F5F0; border:1px solid #E4E0D8; border-left:4px solid #E30613; border-radius:10px; padding:14px; margin-bottom:18px; }
 .modal-body .order-summary-head h4 { color:#1B2430; border:0; padding:0; margin:0; }
@@ -2736,19 +2772,16 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .cost-table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:12px; }
 .cost-table th { background:#14171A; color:white; padding:9px 7px; text-align:left; }
 .cost-table td { border-bottom:1px solid #E4E0D8; padding:9px 7px; }
-.cost-table input[type="checkbox"] { width:20px; height:20px; accent-color:#E30613; cursor:pointer; }
-.cost-selection-help { display:flex; align-items:flex-start; gap:8px; background:#FFF4F4; border:1px solid #F3B8BC; border-radius:9px; padding:10px; margin:0 0 12px; color:#641015; font-size:12px; line-height:1.35; }
-.cost-selection-help svg { flex:0 0 auto; color:#E30613; }
 .cost-table td:last-child, .cost-table th:last-child { text-align:right; }
+.cost-table input[type="checkbox"] { width:20px; height:20px; accent-color:#E30613; cursor:pointer; }
+.cost-table tr.selected-cost-part td { background:#FFF3F4; }
+.cost-selection-note { display:flex; align-items:flex-start; gap:8px; background:#F0F7FF; color:#244A73; border:1px solid #BBD6F1; border-radius:8px; padding:9px 10px; margin:0 0 12px; font-size:12px; line-height:1.4; }
+.cost-selection-note svg { flex-shrink:0; }
 .cost-summary-row { display:flex; justify-content:space-between; gap:12px; padding:8px 2px; border-bottom:1px solid #F0EEE7; font-size:12px; }
 .cost-summary-row strong { font-family:'IBM Plex Mono',monospace; }
 .cost-grand-total { display:flex; justify-content:space-between; align-items:center; gap:12px; background:#67B346; color:white; padding:14px; margin:12px -2px; border-radius:9px; }
 .cost-grand-total strong { color:white; font:18px 'IBM Plex Mono',monospace; }
 .cost-result-card > small { color:#8A8F98; }
-.cost-quote-attach { border-top:1px solid #E4E0D8; margin-top:14px; padding-top:14px; }
-.cost-quote-attach .privacy-note { display:flex; align-items:flex-start; gap:7px; margin-bottom:12px; }
-.cost-quote-attach .btn-primary { width:100%; justify-content:center; }
-.cost-quote-attach > small { display:block; color:#7A4D00; margin-top:8px; }
 
 .route-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:16px; }
 .route-form .btn-primary { width:100%; justify-content:center; }
@@ -2756,7 +2789,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .route-address-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 10px; }
 .address-preview { display:flex; align-items:flex-start; gap:8px; background:#F7F5F0; border-radius:8px; padding:10px; color:#4A5568; font-size:12px; margin:-4px 0 14px; }
 .address-preview svg { color:#E30613; flex-shrink:0; }
-.roundtrip-check { display:flex; align-items:center; gap:8px; font-size:12.5px; margin:0 0 14px; }
+.route-rate-note { display:flex; align-items:flex-start; gap:8px; background:#ECFDF3; border:1px solid #A7E4BC; color:#166534; border-radius:9px; padding:10px 11px; margin:0 0 14px; font-size:12px; line-height:1.4; }
+.route-rate-note svg { flex-shrink:0; }
 .route-error { background:#FCEBEB; color:#791F1F; border-radius:8px; padding:10px; font-size:12px; margin-bottom:12px; }
 .route-result { display:flex; flex-direction:column; justify-content:center; }
 .route-empty { min-height:260px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:9px; color:#8A8F98; }
