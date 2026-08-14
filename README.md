@@ -1,5 +1,9 @@
 # Casa Solar CRM
 
+## Calculadora de costos
+
+El menú incluye una calculadora de costos de calentadores con precio manual, distribución porcentual por tanque, tubos y estructura, y campos adicionales para flete/electroválvula, filtro y otros costos.
+
 ## Publicación oficial
 
 El CRM se publica únicamente en Firebase Hosting mediante `.github/workflows/firebase-hosting.yml`.

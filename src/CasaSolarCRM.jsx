@@ -4,7 +4,7 @@ import {
   ClipboardList, LayoutDashboard, Plus, Search, X, LogOut, Settings,
   TrendingUp, Wrench, Trash2, Edit3, ChevronRight, CheckCircle2, Clock,
   ArrowLeft, Package, Filter, Download, Mail, ShoppingCart, Send, Megaphone, Upload,
-  Calculator, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, UserX, UserCheck
+  Calculator, CircleDollarSign, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, UserX, UserCheck
 } from "lucide-react";
 import {
   getSharedData,
@@ -239,6 +239,7 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "dashboard", label: "Panel", icon: LayoutDashboard },
     { id: "contactos", label: "Contactos", icon: Users2 },
     { id: "calculadora", label: "Calculadora de rutas", icon: Calculator },
+    { id: "calculadora-costos", label: "Calculadora de costos", icon: CircleDollarSign },
     { id: "cotizaciones", label: "Cotizaciones", icon: FileText },
     { id: "reportes", label: "Reportes de ventas", icon: BarChart3 },
     { id: "seguimientos", label: "Seguimientos", icon: ClipboardList },
@@ -443,6 +444,63 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
       <p className="route-note">Cálculo orientativo basado en rutas de OpenStreetMap. Confirma accesos, desvíos, peajes y condiciones de carretera antes de cerrar la cotización.</p>
     </div>
   );
+}
+
+function HeaterCostCalculator() {
+  const draftKey = "casasolar:calculadora-costos";
+  const saved = readDraft(draftKey, {});
+  const [model, setModel] = useState(saved.model || "CSG15");
+  const [price, setPrice] = useState(saved.price ?? "5975");
+  const [parts, setParts] = useState(saved.parts || [
+    { id: "tanque", name: "Tanque", percentage: "50" },
+    { id: "tubos", name: "Tubos", percentage: "35" },
+    { id: "estructura", name: "Estructura", percentage: "15" },
+  ]);
+  const [freight, setFreight] = useState(saved.freight ?? "0");
+  const [filter, setFilter] = useState(saved.filter ?? "0");
+  const [other, setOther] = useState(saved.other ?? "0");
+  const numericPrice = Math.max(0, Number(price) || 0);
+  const calculatedParts = parts.map(part => ({ ...part, cost: numericPrice * Math.max(0, Number(part.percentage) || 0) / 100 }));
+  const percentageTotal = calculatedParts.reduce((sum, part) => sum + (Number(part.percentage) || 0), 0);
+  const componentTotal = calculatedParts.reduce((sum, part) => sum + part.cost, 0);
+  const extraTotal = [freight, filter, other].reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+  const grandTotal = componentTotal + extraTotal;
+  useEffect(() => { saveDraft(draftKey, { model, price, parts, freight, filter, other }); }, [model, price, parts, freight, filter, other]);
+  const updatePart = (id, key, value) => setParts(current => current.map(part => part.id === id ? { ...part, [key]: value } : part));
+  const reset = () => {
+    setModel("CSG15"); setPrice("5975"); setParts([{ id: "tanque", name: "Tanque", percentage: "50" }, { id: "tubos", name: "Tubos", percentage: "35" }, { id: "estructura", name: "Estructura", percentage: "15" }]); setFreight("0"); setFilter("0"); setOther("0");
+  };
+  return <div>
+    <div className="page-head row"><div><h2>Calculadora de costos de calentadores</h2><p>Distribuye el precio manual del calentador entre tanque, tubos y estructura.</p></div><button className="btn-ghost" onClick={reset}>Restablecer valores</button></div>
+    <div className="cost-calculator-layout">
+      <div className="section-card">
+        <div className="section-title"><CircleDollarSign size={20}/><div><h3>Datos del calentador</h3><p>Puede cambiar todos los valores según el modelo y la compra.</p></div></div>
+        <div className="form-grid">
+          <label><span className="field-label">Modelo</span><input className="input" value={model} onChange={e => setModel(e.target.value)} placeholder="Ej. CSG15"/></label>
+          <label><span className="field-label">Valor manual del calentador (Q)</span><input className="input" type="number" min="0" step="0.01" value={price} onChange={e => setPrice(e.target.value)} /></label>
+        </div>
+        <h4>Porcentaje por cada parte</h4>
+        <div className="cost-parts-editor">{parts.map(part => <div className="cost-part-input" key={part.id}><input className="input" value={part.name} onChange={e => updatePart(part.id, "name", e.target.value)}/><span><input className="input" type="number" min="0" step="0.01" value={part.percentage} onChange={e => updatePart(part.id, "percentage", e.target.value)}/><b>%</b></span><strong>{fmtMoney(calculatedParts.find(item => item.id === part.id)?.cost || 0)}</strong></div>)}</div>
+        <div className={`percentage-check ${Math.abs(percentageTotal - 100) < .001 ? "valid" : "warning"}`}><span>Total de porcentajes</span><strong>{percentageTotal.toFixed(2)}%</strong><small>{Math.abs(percentageTotal - 100) < .001 ? "Distribución completa" : "Los porcentajes deberían sumar 100%"}</small></div>
+        <h4>Costos adicionales</h4>
+        <div className="form-grid">
+          <label><span className="field-label">Flete / Electroválvula (Q)</span><input className="input" type="number" min="0" step="0.01" value={freight} onChange={e => setFreight(e.target.value)}/></label>
+          <label><span className="field-label">Filtro (Q)</span><input className="input" type="number" min="0" step="0.01" value={filter} onChange={e => setFilter(e.target.value)}/></label>
+          <label><span className="field-label">Otros costos (Q)</span><input className="input" type="number" min="0" step="0.01" value={other} onChange={e => setOther(e.target.value)}/></label>
+        </div>
+      </div>
+      <div className="section-card cost-result-card">
+        <div className="cost-result-title"><CircleDollarSign size={24}/><div><span>Modelo</span><h3>{model || "Sin modelo"}</h3></div></div>
+        <table className="cost-table"><thead><tr><th>Producto</th><th>%</th><th>Base</th><th>Costo</th></tr></thead><tbody>{calculatedParts.map(part => <tr key={part.id}><td>{part.name}</td><td>{Number(part.percentage || 0).toFixed(2)}%</td><td>{fmtMoney(numericPrice)}</td><td><strong>{fmtMoney(part.cost)}</strong></td></tr>)}</tbody></table>
+        <div className="cost-summary-row"><span>Subtotal de partes</span><strong>{fmtMoney(componentTotal)}</strong></div>
+        <div className="cost-summary-row"><span>Flete / Electroválvula</span><strong>{fmtMoney(Number(freight) || 0)}</strong></div>
+        <div className="cost-summary-row"><span>Filtro</span><strong>{fmtMoney(Number(filter) || 0)}</strong></div>
+        <div className="cost-summary-row"><span>Otros</span><strong>{fmtMoney(Number(other) || 0)}</strong></div>
+        <div className="cost-grand-total"><span>Costo total calculado</span><strong>{fmtMoney(grandTotal)}</strong></div>
+        <small>El cálculo se guarda automáticamente en este dispositivo.</small>
+      </div>
+    </div>
+  </div>;
 }
 
 function Dashboard({ contactos, cotizaciones, seguimientos, currentUser, vendedores }) {
@@ -2324,6 +2382,7 @@ export default function CasaSolarCRM() {
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
             )}
             {tab === "calculadora" && <RouteCalculator cotizaciones={cotizaciones} currentUser={currentUser} onUpdateCotizacion={updateCotizacion} />}
+            {tab === "calculadora-costos" && <HeaterCostCalculator />}
             {tab === "contactos" && !selectedContact && (
               <ContactosView contactos={contactos} vendedores={vendedores} currentUser={currentUser}
                 onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onOpen={setSelectedId} />
@@ -2618,6 +2677,32 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .sales-bar { height:100%; background:linear-gradient(90deg,#E30613,#FF5A5F); border-radius:10px; }
 
 /* Calculadora de rutas */
+.cost-calculator-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr); gap:18px; align-items:start; }
+.cost-parts-editor { display:flex; flex-direction:column; gap:8px; margin:10px 0 14px; }
+.cost-part-input { display:grid; grid-template-columns:minmax(120px,1fr) 110px 120px; gap:8px; align-items:center; }
+.cost-part-input .input { margin:0; }
+.cost-part-input > span { position:relative; }
+.cost-part-input > span .input { padding-right:28px; }
+.cost-part-input > span b { position:absolute; right:10px; top:10px; color:#667085; }
+.cost-part-input > strong { text-align:right; font-family:'IBM Plex Mono',monospace; }
+.percentage-check { display:grid; grid-template-columns:1fr auto; gap:3px 12px; padding:11px 12px; border-radius:9px; margin-bottom:18px; }
+.percentage-check small { grid-column:1/-1; }
+.percentage-check.valid { background:#DCFCE7; color:#166534; }
+.percentage-check.warning { background:#FFF2CC; color:#7A4D00; }
+.cost-result-card { position:sticky; top:18px; overflow:hidden; }
+.cost-result-title { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.cost-result-title svg { color:#E30613; }
+.cost-result-title span { color:#8A8F98; font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+.cost-table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:12px; }
+.cost-table th { background:#14171A; color:white; padding:9px 7px; text-align:left; }
+.cost-table td { border-bottom:1px solid #E4E0D8; padding:9px 7px; }
+.cost-table td:last-child, .cost-table th:last-child { text-align:right; }
+.cost-summary-row { display:flex; justify-content:space-between; gap:12px; padding:8px 2px; border-bottom:1px solid #F0EEE7; font-size:12px; }
+.cost-summary-row strong { font-family:'IBM Plex Mono',monospace; }
+.cost-grand-total { display:flex; justify-content:space-between; align-items:center; gap:12px; background:#67B346; color:white; padding:14px; margin:12px -2px; border-radius:9px; }
+.cost-grand-total strong { color:white; font:18px 'IBM Plex Mono',monospace; }
+.cost-result-card > small { color:#8A8F98; }
+
 .route-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:16px; }
 .route-form .btn-primary { width:100%; justify-content:center; }
 .route-address-title { font-size:15px; margin:4px 0 12px; }
@@ -2668,6 +2753,10 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .client-preview { grid-template-columns:1fr; }
   .client-preview .full { grid-column:auto; }
   .route-layout { grid-template-columns:1fr; }
+  .cost-calculator-layout { grid-template-columns:1fr; }
+  .cost-result-card { position:static; }
+  .cost-part-input { grid-template-columns:1fr 100px; }
+  .cost-part-input > strong { grid-column:1/-1; text-align:left; }
   .route-address-grid { grid-template-columns:1fr; }
   .pending-transport-card { align-items:stretch; flex-direction:column; }
   .planning-filters { align-items:stretch; flex-direction:column; }
