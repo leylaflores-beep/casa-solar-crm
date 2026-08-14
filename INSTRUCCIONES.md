@@ -1,14 +1,13 @@
-# Actualización pequeña Casa Solar CRM v48
+# Actualización pequeña Casa Solar CRM v51
 
-Esta actualización contiene únicamente el archivo funcional que cambió. No subas el ZIP directamente al repositorio.
+Esta actualización incluye la calculadora corregida y conserva la protección de datos v50.
 
-1. Descomprime `actualizacion-casa-solar-v48-github.zip` en tu computadora.
-2. Abre en GitHub el repositorio `casa-solar-crm`.
-3. Entra en la carpeta `src`.
-4. Pulsa **Add file → Upload files**.
-5. Arrastra únicamente el archivo `CasaSolarCRM.jsx` incluido en esta actualización.
-6. GitHub indicará que reemplazará el archivo existente con el mismo nombre.
-7. En **Commit changes**, escribe `Corregir calculadoras v48` y confirma.
-8. Espera a que termine GitHub Actions y después actualiza el CRM con `Ctrl + F5`.
+1. Descomprime `actualizacion-casa-solar-v51-github.zip`.
+2. En GitHub abre `casa-solar-crm` y entra en `src`.
+3. Pulsa **Add file → Upload files**.
+4. Sube juntos `CasaSolarCRM.jsx` y `firebase.js`.
+5. Confirma que reemplazará ambos archivos.
+6. Pulsa **Commit changes** con el texto `Corregir suma de partes v51`.
+7. Espera GitHub Actions y actualiza el CRM con `Ctrl + F5`.
 
-No es necesario subir `dist`, `public`, `node_modules`, imágenes, reglas de Firebase ni otros archivos para aplicar esta corrección.
+No subas el ZIP directamente y no es necesario modificar las reglas de Firebase.
