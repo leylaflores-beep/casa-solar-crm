@@ -4,6 +4,12 @@
 
 El menú incluye una calculadora de costos de calentadores con precio manual, distribución porcentual por tanque, tubos y estructura, y campos adicionales para flete/electroválvula, filtro y otros costos.
 
+Leyla, Ligia y Samuel pueden marcar una o máximo dos partes calculadas y agregarlas directamente a una cotización. La cotización recibe únicamente las partes marcadas como líneas independientes con su modelo, porcentaje y precio calculado; nunca se agrega automáticamente el calentador completo. La autorización reconoce tanto el correo como el nombre de los perfiles históricos.
+
+## Uso en teléfonos y tabletas
+
+El CRM adapta el menú, formularios, tablas, tarjetas, calculadoras y ventanas al ancho disponible. La calculadora también mide el espacio real que queda dentro del CRM, por lo que cambia a una sola columna cuando la barra lateral, el zoom o una ventana pequeña reducen el área de trabajo. En teléfonos, las funciones aparecen como botones táctiles en una barra superior desplazable; las tablas se pueden mover horizontalmente y los formularios y ventanas se muestran en una sola columna. El botón **Salir** también queda disponible en el menú móvil.
+
 ## Publicación oficial
 
 El CRM se publica únicamente en Firebase Hosting mediante `.github/workflows/firebase-hosting.yml`.

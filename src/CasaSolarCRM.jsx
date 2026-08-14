@@ -267,6 +267,9 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
             <it.icon size={17} /> {it.label}
           </button>
         ))}
+        <button className="nav-item mobile-logout" onClick={onLogout} aria-label="Cerrar sesión">
+          <LogOut size={17} /> Salir
+        </button>
       </nav>
       <div className="sidebar-footer">
         <div className="user-chip">
@@ -446,7 +449,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   );
 }
 
-function HeaterCostCalculator() {
+function HeaterCostCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const draftKey = "casasolar:calculadora-costos";
   const saved = readDraft(draftKey, {});
   const [model, setModel] = useState(saved.model || "CSG15");
@@ -459,6 +462,18 @@ function HeaterCostCalculator() {
   const [freight, setFreight] = useState(saved.freight ?? "0");
   const [filter, setFilter] = useState(saved.filter ?? "0");
   const [other, setOther] = useState(saved.other ?? "0");
+  const [selectedParts, setSelectedParts] = useState([]);
+  const [selectedQuoteId, setSelectedQuoteId] = useState("");
+  const [attachedMessage, setAttachedMessage] = useState("");
+  const authorizedEmails = ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com", SAMUEL_CORRECT_EMAIL];
+  const currentEmail = String(currentUser?.email || "").trim().toLowerCase();
+  const currentName = normalizeIdentity(currentUser?.nombre || "");
+  const isLeyla = currentEmail === "leyla.flores@gmail.com" || (currentName.includes("leyla") && currentName.includes("flores"));
+  const isLigia = currentEmail === "ligiaeugeniamolina@gmail.com" || currentName.includes("ligia");
+  const isSamuel = currentEmail === SAMUEL_CORRECT_EMAIL || (currentName.includes("samuel") && currentName.includes("lemus"));
+  const canAttachToQuote = authorizedEmails.includes(currentEmail) || isLeyla || isLigia || isSamuel;
+  const visibleQuotes = isLeyla || isLigia
+    ? cotizaciones : cotizaciones.filter(item => item.vendedor === currentUser?.nombre);
   const numericPrice = Math.max(0, Number(price) || 0);
   const calculatedParts = parts.map(part => ({ ...part, cost: numericPrice * Math.max(0, Number(part.percentage) || 0) / 100 }));
   const percentageTotal = calculatedParts.reduce((sum, part) => sum + (Number(part.percentage) || 0), 0);
@@ -467,6 +482,27 @@ function HeaterCostCalculator() {
   const grandTotal = componentTotal + extraTotal;
   useEffect(() => { saveDraft(draftKey, { model, price, parts, freight, filter, other }); }, [model, price, parts, freight, filter, other]);
   const updatePart = (id, key, value) => setParts(current => current.map(part => part.id === id ? { ...part, [key]: value } : part));
+  const togglePart = id => setSelectedParts(current => current.includes(id) ? current.filter(item => item !== id) : current.length < 2 ? [...current, id] : current);
+  const attachParts = async () => {
+    if (!canAttachToQuote || !selectedQuoteId || !selectedParts.length) return;
+    const quote = cotizaciones.find(item => item.id === selectedQuoteId);
+    if (!quote) return setAttachedMessage("No encontramos la cotización seleccionada.");
+    const selectedItems = calculatedParts.filter(part => selectedParts.includes(part.id)).map(part => ({
+      id: uid(), productoId: `componente_calentador_${part.id}`, productoNombre: `${model} · ${part.name}`,
+      descripcion: `Parte de calentador solar ${model} · ${part.name} (${Number(part.percentage || 0).toFixed(2)}%)`, tamano: model,
+      cantidad: 1, precioLista: part.cost, precioUnitario: part.cost, porcentajeCosto: Number(part.percentage) || 0, origenCalculo: "Calculadora de costos",
+    }));
+    const items = [...(quote.items || []), ...selectedItems];
+    const total = items.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
+    const updated = { ...quote, items, total };
+    if (quote.descuentoAutorizado) {
+      updated.totalOriginal = total; updated.descuentoAutorizado = null; updated.descuentoSolicitud = null;
+      updated.descuentoHistorial = [...(quote.descuentoHistorial || []), { accion: "Invalidado al agregar partes desde la calculadora de costos", fecha: new Date().toISOString(), usuario: currentUser.nombre, email: currentUser.email || "" }];
+    }
+    await onUpdateCotizacion(updated);
+    setAttachedMessage(`${selectedItems.length} parte${selectedItems.length === 1 ? "" : "s"} agregada${selectedItems.length === 1 ? "" : "s"} a ${quote.numero || "la cotización"}.`);
+    setSelectedParts([]); setSelectedQuoteId("");
+  };
   const reset = () => {
     setModel("CSG15"); setPrice("5975"); setParts([{ id: "tanque", name: "Tanque", percentage: "50" }, { id: "tubos", name: "Tubos", percentage: "35" }, { id: "estructura", name: "Estructura", percentage: "15" }]); setFreight("0"); setFilter("0"); setOther("0");
   };
@@ -491,7 +527,9 @@ function HeaterCostCalculator() {
       </div>
       <div className="section-card cost-result-card">
         <div className="cost-result-title"><CircleDollarSign size={24}/><div><span>Modelo</span><h3>{model || "Sin modelo"}</h3></div></div>
-        <table className="cost-table"><thead><tr><th>Producto</th><th>%</th><th>Base</th><th>Costo</th></tr></thead><tbody>{calculatedParts.map(part => <tr key={part.id}><td>{part.name}</td><td>{Number(part.percentage || 0).toFixed(2)}%</td><td>{fmtMoney(numericPrice)}</td><td><strong>{fmtMoney(part.cost)}</strong></td></tr>)}</tbody></table>
+        {canAttachToQuote && <div className="cost-selection-help"><CheckCircle2 size={17}/><span><strong>Elige qué deseas cotizar.</strong> Marca solamente una o dos partes; el calentador completo no se agregará automáticamente.</span></div>}
+        <table className="cost-table"><thead><tr>{canAttachToQuote && <th>Agregar</th>}<th>Producto</th><th>%</th><th>Base</th><th>Costo</th></tr></thead><tbody>{calculatedParts.map(part => <tr key={part.id}>{canAttachToQuote && <td><input type="checkbox" checked={selectedParts.includes(part.id)} disabled={!selectedParts.includes(part.id) && selectedParts.length >= 2} onChange={() => togglePart(part.id)} aria-label={`Agregar ${part.name}`}/></td>}<td>{part.name}</td><td>{Number(part.percentage || 0).toFixed(2)}%</td><td>{fmtMoney(numericPrice)}</td><td><strong>{fmtMoney(part.cost)}</strong></td></tr>)}</tbody></table>
+        {canAttachToQuote && <div className="cost-quote-attach"><div className="privacy-note"><ShieldCheck size={16}/><span>Autorizado para Leyla, Ligia y Samuel. Selecciona una o máximo dos partes.</span></div><label className="field-label">Cotización donde se agregarán las partes</label><select className="input" value={selectedQuoteId} onChange={e => { setSelectedQuoteId(e.target.value); setAttachedMessage(""); }}><option value="">Seleccionar cotización</option>{visibleQuotes.map(quote => <option key={quote.id} value={quote.id}>{quote.numero || "Sin número"} · {quote.contactoNombre || "Sin contacto"}</option>)}</select><button className="btn-primary" disabled={!selectedQuoteId || !selectedParts.length} onClick={attachParts}><Plus size={16}/> Agregar {selectedParts.length || ""} parte{selectedParts.length === 1 ? "" : "s"} a cotización</button>{selectedParts.length >= 2 && <small>Ya seleccionaste el máximo de dos partes.</small>}{attachedMessage && <p className="form-success">{attachedMessage}</p>}</div>}
         <div className="cost-summary-row"><span>Subtotal de partes</span><strong>{fmtMoney(componentTotal)}</strong></div>
         <div className="cost-summary-row"><span>Flete / Electroválvula</span><strong>{fmtMoney(Number(freight) || 0)}</strong></div>
         <div className="cost-summary-row"><span>Filtro</span><strong>{fmtMoney(Number(filter) || 0)}</strong></div>
@@ -2382,7 +2420,7 @@ export default function CasaSolarCRM() {
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
             )}
             {tab === "calculadora" && <RouteCalculator cotizaciones={cotizaciones} currentUser={currentUser} onUpdateCotizacion={updateCotizacion} />}
-            {tab === "calculadora-costos" && <HeaterCostCalculator />}
+            {tab === "calculadora-costos" && <HeaterCostCalculator cotizaciones={cotizaciones} currentUser={currentUser} onUpdateCotizacion={updateCotizacion} />}
             {tab === "contactos" && !selectedContact && (
               <ContactosView contactos={contactos} vendedores={vendedores} currentUser={currentUser}
                 onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onOpen={setSelectedId} />
@@ -2461,7 +2499,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .user-name { font-size:12.5px; font-weight:500; color:#fff; }
 .user-role { font-size:11px; color:#9AA0A6; }
 
-.main { flex:1; padding: 26px 30px; overflow-y:auto; max-height: 640px; }
+.main { flex:1; min-width:0; padding: 26px 30px; overflow-y:auto; container-type:inline-size; }
+.mobile-logout { display:none; }
 .page-head { margin-bottom: 20px; }
 .page-head.row, .row { display:flex; align-items:center; justify-content:space-between; }
 
@@ -2677,7 +2716,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .sales-bar { height:100%; background:linear-gradient(90deg,#E30613,#FF5A5F); border-radius:10px; }
 
 /* Calculadora de rutas */
-.cost-calculator-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr); gap:18px; align-items:start; }
+.cost-calculator-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(300px,.9fr); gap:18px; align-items:start; min-width:0; }
+.cost-calculator-layout > * { min-width:0; }
 .cost-parts-editor { display:flex; flex-direction:column; gap:8px; margin:10px 0 14px; }
 .cost-part-input { display:grid; grid-template-columns:minmax(120px,1fr) 110px 120px; gap:8px; align-items:center; }
 .cost-part-input .input { margin:0; }
@@ -2696,12 +2736,19 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .cost-table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:12px; }
 .cost-table th { background:#14171A; color:white; padding:9px 7px; text-align:left; }
 .cost-table td { border-bottom:1px solid #E4E0D8; padding:9px 7px; }
+.cost-table input[type="checkbox"] { width:20px; height:20px; accent-color:#E30613; cursor:pointer; }
+.cost-selection-help { display:flex; align-items:flex-start; gap:8px; background:#FFF4F4; border:1px solid #F3B8BC; border-radius:9px; padding:10px; margin:0 0 12px; color:#641015; font-size:12px; line-height:1.35; }
+.cost-selection-help svg { flex:0 0 auto; color:#E30613; }
 .cost-table td:last-child, .cost-table th:last-child { text-align:right; }
 .cost-summary-row { display:flex; justify-content:space-between; gap:12px; padding:8px 2px; border-bottom:1px solid #F0EEE7; font-size:12px; }
 .cost-summary-row strong { font-family:'IBM Plex Mono',monospace; }
 .cost-grand-total { display:flex; justify-content:space-between; align-items:center; gap:12px; background:#67B346; color:white; padding:14px; margin:12px -2px; border-radius:9px; }
 .cost-grand-total strong { color:white; font:18px 'IBM Plex Mono',monospace; }
 .cost-result-card > small { color:#8A8F98; }
+.cost-quote-attach { border-top:1px solid #E4E0D8; margin-top:14px; padding-top:14px; }
+.cost-quote-attach .privacy-note { display:flex; align-items:flex-start; gap:7px; margin-bottom:12px; }
+.cost-quote-attach .btn-primary { width:100%; justify-content:center; }
+.cost-quote-attach > small { display:block; color:#7A4D00; margin-top:8px; }
 
 .route-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:16px; }
 .route-form .btn-primary { width:100%; justify-content:center; }
@@ -2739,14 +2786,42 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .catalog-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap:10px; }
 .catalog-item { display:flex; align-items:center; gap:8px; background:#F7F5F0; border-radius:8px; padding:10px 12px; font-size:13px; }
 
+/* Se adapta al espacio real que queda dentro del CRM, incluso con zoom. */
+@container (max-width: 900px) {
+  .cost-calculator-layout, .route-layout { grid-template-columns:1fr; }
+  .cost-result-card { position:static; }
+  .page-head.row { align-items:stretch; flex-direction:column; gap:10px; }
+  .page-head.row > button { width:100%; justify-content:center; }
+}
+
+@container (max-width: 560px) {
+  .form-grid, .row-2, .quote-item-grid, .client-preview { grid-template-columns:1fr; }
+  .cost-part-input { grid-template-columns:minmax(0,1fr) 92px; }
+  .cost-part-input > strong { grid-column:1/-1; text-align:left; }
+  .cost-table { min-width:500px; }
+  .cost-result-card { overflow-x:auto; }
+}
+
 @media (max-width: 720px) {
-  .app-shell { flex-direction:column; }
-  .sidebar { width:100%; flex-direction:row; align-items:center; overflow-x:auto; padding:10px; }
-  .sidebar nav { display:flex; gap:4px; }
+  .app-root { min-height:100dvh; width:100%; border-radius:0; overflow:visible; }
+  .app-shell { flex-direction:column; min-height:100dvh; min-width:0; }
+  .sidebar { width:100%; display:block; padding:7px 6px; position:sticky; top:0; z-index:40; overflow:hidden; box-shadow:0 3px 12px rgba(0,0,0,.18); }
+  .brand { display:none; }
+  .sidebar nav { display:flex; gap:5px; overflow-x:auto; padding:2px 1px 5px; scroll-snap-type:x proximity; scrollbar-width:thin; }
+  .nav-item { flex:0 0 78px; min-height:58px; padding:6px 4px; margin:0; flex-direction:column; justify-content:center; gap:4px; text-align:center; font-size:9.5px; line-height:1.1; scroll-snap-align:start; }
+  .nav-item svg { width:20px; height:20px; flex-shrink:0; }
+  .mobile-logout { display:flex; }
   .sidebar-footer { display:none; }
+  .main { width:100%; min-width:0; max-height:none; overflow:visible; padding:14px 10px 28px; }
+  .page-head { margin-bottom:14px; }
+  .page-head.row, .row { align-items:stretch; flex-direction:column; gap:10px; }
+  .page-head .btn-primary, .page-head .btn-ghost { width:100%; justify-content:center; }
+  .section-card { padding:14px 12px; overflow-x:auto; }
   .kpi-grid { grid-template-columns: repeat(2,1fr); }
+  .kpi-card { padding:12px; min-width:0; }
+  .kpi-value { font-size:18px; }
   .row-2 { grid-template-columns: 1fr; }
-  .quote-item-grid { grid-template-columns:1fr 1fr; }
+  .quote-item-grid { grid-template-columns:1fr; }
   .quote-category-row { align-items:stretch; flex-direction:column; }
   .quote-category-row label { width:100%; }
   .form-grid { grid-template-columns:1fr; }
@@ -2757,6 +2832,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .cost-result-card { position:static; }
   .cost-part-input { grid-template-columns:1fr 100px; }
   .cost-part-input > strong { grid-column:1/-1; text-align:left; }
+  .cost-table { min-width:520px; }
   .route-address-grid { grid-template-columns:1fr; }
   .pending-transport-card { align-items:stretch; flex-direction:column; }
   .planning-filters { align-items:stretch; flex-direction:column; }
@@ -2769,6 +2845,44 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .warranty-approvals { grid-template-columns:1fr; }
   .report-head { align-items:flex-start; flex-direction:column; }
   .sales-bar-row { grid-template-columns:52px minmax(80px,1fr) 90px; }
+  .table { min-width:640px; }
+  .preview-scroll, .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .filters { flex-direction:column; }
+  .search-box, .filter-select { width:100%; min-width:0; }
+  .contact-row, .seg-row { align-items:flex-start; flex-wrap:wrap; gap:9px; padding:11px; }
+  .contact-main { flex:1 1 calc(100% - 50px); }
+  .contact-date { margin-left:43px; }
+  .follow-open { margin-left:auto; }
+  .mini-row { align-items:stretch; flex-wrap:wrap; gap:8px; }
+  .mini-row > .input, .mini-row > input, .mini-row > select { flex:1 1 100% !important; min-width:0 !important; }
+  .detail-head { align-items:flex-start; flex-wrap:wrap; }
+  .detail-head > div:nth-child(2) { flex:1 1 calc(100% - 60px) !important; }
+  .detail-head > button, .detail-head > select { flex:1 1 100%; width:100% !important; justify-content:center; }
+  .detail-meta { gap:8px 14px; }
+  .quote-actions { display:flex; flex-wrap:wrap; gap:6px; min-width:250px; }
+  .quote-actions .btn-ghost.small { margin:0; min-height:38px; }
+  .modal-overlay { padding:0; align-items:flex-end; }
+  .modal, .modal.quote-modal, .modal.modal-wide, .discount-modal { max-width:none; width:100%; max-height:100dvh; height:auto; border-radius:16px 16px 0 0; }
+  .modal-head { padding:13px 14px; gap:10px; }
+  .modal-head h3 { font-size:16px; }
+  .modal-body { padding:14px; overflow:auto; }
+  .modal-foot { padding:11px 14px; flex-wrap:wrap; position:sticky; bottom:0; background:#fff; }
+  .modal-foot .btn-primary, .modal-foot .btn-ghost { flex:1 1 130px; justify-content:center; min-height:44px; }
+  .evaluation-route-note { align-items:flex-start; flex-wrap:wrap; }
+  .evaluation-route-note .btn-primary { width:100%; justify-content:center; }
+  .btn-primary, .btn-ghost { min-height:42px; }
+  .login-wrap { min-height:100dvh; padding:30px 14px; }
+  .login-card { padding:22px 18px; }
+}
+
+@media (min-width:721px) and (max-width:1100px) {
+  .sidebar { width:184px; }
+  .main { padding:20px; max-height:none; min-width:0; }
+  .kpi-grid { grid-template-columns:repeat(2,1fr); }
+  .cost-calculator-layout, .route-layout { grid-template-columns:1fr; }
+  .cost-result-card { position:static; }
+  .section-card { overflow-x:auto; }
+  .modal.quote-modal, .modal.modal-wide { max-width:94vw; }
 }
 
 @media print {
