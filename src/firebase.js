@@ -22,10 +22,14 @@ const ADMINISTRADORAS = {
   "leyla.flores@gmail.com": "Leyla Flores",
   "ligiaeugeniamolina@gmail.com": "Ligia Eugenia Molina",
 };
+const USUARIOS_ESPECIALES = {
+  "casasolar.bodega.gt@gmail.com": { nombre: "Samuel Lemus", rol: "Jefe técnico", roles: ["Jefe técnico", "Vendedor"] },
+};
 
 export async function profileFromFirebaseUser(user) {
   const email = (user.email || "").toLowerCase();
   const adminName = ADMINISTRADORAS[email];
+  const specialUser = USUARIOS_ESPECIALES[email];
   const profileSnapshot = await getDoc(doc(db, "crm_data", `user_${user.uid}`));
   const savedProfile = profileSnapshot.exists() ? profileSnapshot.data() : null;
   const fallbackName = email
@@ -36,10 +40,10 @@ export async function profileFromFirebaseUser(user) {
   return {
     uid: user.uid,
     email,
-    nombre: savedProfile?.nombre || adminName || user.displayName || fallbackName || "Vendedor",
-    rol: adminName ? "Jefe" : (savedProfile?.rol || "Vendedor"),
-    roles: adminName ? ["Jefe"] : (Array.isArray(savedProfile?.roles) ? savedProfile.roles : [savedProfile?.rol || "Vendedor"]),
-    activo: adminName ? true : savedProfile?.activo !== false,
+    nombre: specialUser?.nombre || savedProfile?.nombre || adminName || user.displayName || fallbackName || "Vendedor",
+    rol: adminName ? "Jefe" : (specialUser?.rol || savedProfile?.rol || "Vendedor"),
+    roles: adminName ? ["Jefe"] : (specialUser?.roles || (Array.isArray(savedProfile?.roles) ? savedProfile.roles : [savedProfile?.rol || "Vendedor"])),
+    activo: adminName || specialUser ? true : savedProfile?.activo !== false,
   };
 }
 

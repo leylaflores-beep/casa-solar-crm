@@ -192,9 +192,14 @@ function LoginScreen({ onLogin }) {
     try {
       await onLogin(email, password);
     } catch (e) {
-      setError(String(email || "").trim().toLowerCase() === SAMUEL_WRONG_EMAIL
-        ? `El correo de Samuel fue escrito sin el punto. Utiliza ${SAMUEL_CORRECT_EMAIL}.`
-        : "Correo o contraseña incorrectos. Verifica los datos e inténtalo nuevamente.");
+      const code = String(e?.code || "");
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      if (normalizedEmail === SAMUEL_WRONG_EMAIL) setError(`El correo de Samuel fue escrito sin el punto. Utiliza ${SAMUEL_CORRECT_EMAIL}.`);
+      else if (code.includes("too-many-requests")) setError("Firebase bloqueó temporalmente los intentos por seguridad. Espera unos minutos y vuelve a probar.");
+      else if (code.includes("network")) setError("No se pudo conectar con Firebase. Revisa el Internet e inténtalo nuevamente.");
+      else if (code.includes("user-disabled")) setError("Este acceso está suspendido. Solicita a Leyla que lo reactive desde Equipo.");
+      else if (normalizedEmail === SAMUEL_CORRECT_EMAIL) setError("Firebase todavía no reconoce la clave de Samuel. Usa el último enlace de restablecimiento recibido y luego escribe aquí la nueva contraseña.");
+      else setError("Correo o contraseña incorrectos. Verifica los datos e inténtalo nuevamente.");
       setEnviando(false);
     }
   };
@@ -1624,6 +1629,7 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
               {(emailDrafts[v.id] ?? v.email ?? "").trim().toLowerCase() !== String(v.email || "").trim().toLowerCase() && <button className="btn-primary small" onClick={async () => { const saved = await onChangeEmail(v, emailDrafts[v.id]); if (saved) setEmailDrafts(current => { const next = { ...current }; delete next[v.id]; return next; }); }}>Guardar correo</button>}
               <select className="input compact" style={{ minWidth: 190 }} value={Array.isArray(v.roles) && v.roles.includes("Jefe técnico") && v.roles.includes("Vendedor") ? "Jefe técnico + Vendedor" : (v.rol || "Vendedor")} onChange={e => { const special = e.target.value === "Jefe técnico + Vendedor"; onUpdate({ ...v, rol: special ? "Jefe técnico" : e.target.value, roles: special ? ["Jefe técnico", "Vendedor"] : [e.target.value], usuarioEspecial: special }); }}><option>Vendedor</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select>
               {v.usuarioEspecial && <span className="badge badge-blue">Usuario especial</span>}
+              {normalizeIdentity(v.nombre) === "carolinacustodio" && !v.email && <span className="badge badge-gray">Agregar correo de Carolina</span>}
               {v.usuarioEspecial && String(v.email || "").toLowerCase() !== SAMUEL_CORRECT_EMAIL && <button className="btn-primary small" onClick={() => onChangeEmail(v, SAMUEL_CORRECT_EMAIL)}><Mail size={14}/> Corregir correo de Samuel</button>}
               <span className={`badge ${v.activo === false ? "badge-gray" : "badge-green"}`}>{v.activo === false ? "Suspendido" : "Activo"}</span>
               {v.email && <button className="btn-ghost small" onClick={() => onResetPassword(v)} title="Enviar enlace de cambio al correo"><KeyRound size={14}/> Restablecer</button>}
@@ -1900,7 +1906,7 @@ export default function CasaSolarCRM() {
 
       setLoading(true);
       const profile = await profileFromFirebaseUser(firebaseUser);
-      if (profile.activo === false) {
+      if (profile.activo === false && profile.email !== SAMUEL_CORRECT_EMAIL) {
         await logoutFirebase();
         window.alert("Este acceso está suspendido. Comunícate con Leyla para revisar tu estado en la empresa.");
         setLoading(false);
@@ -1923,7 +1929,7 @@ export default function CasaSolarCRM() {
       let sellerList = samuelConsolidation.team;
       if (samuelConsolidation.changed) await storageSet("casasolar:vendedores", sellerList, true);
       const linkedSeller = sellerList.find(item => item.uid === profile.uid || item.email === profile.email || item.nombre === profile.nombre);
-      if (linkedSeller?.activo === false) {
+      if (linkedSeller?.activo === false && profile.email !== SAMUEL_CORRECT_EMAIL) {
         await setCRMUserActive(profile.uid, false, "Validación automática del CRM");
         await logoutFirebase();
         window.alert("Este acceso está suspendido. Comunícate con Leyla para revisar tu estado en la empresa.");
@@ -2009,7 +2015,7 @@ export default function CasaSolarCRM() {
   useEffect(() => {
     if (!currentUser) return undefined;
     const unsubscribeProfile = subscribeCRMUserProfile(currentUser.uid, profile => {
-      if (profile?.activo === false) {
+      if (profile?.activo === false && currentUser.email !== SAMUEL_CORRECT_EMAIL) {
         window.alert("Tu acceso al CRM fue suspendido. La sesión se cerrará ahora.");
         logoutFirebase();
       }
@@ -2250,7 +2256,19 @@ export default function CasaSolarCRM() {
     }
     if (!window.confirm(`¿Cambiar el acceso de ${user.nombre} de ${user.email || "sin correo"} a ${normalizedEmail}? El acceso anterior quedará suspendido y el nuevo correo recibirá un enlace para crear su contraseña.`)) return false;
     try {
-      const updated = await replaceCRMUserEmail({ user, newEmail: normalizedEmail, changedBy: currentUser.nombre });
+      let updated;
+      if (user.uid) {
+        updated = await replaceCRMUserEmail({ user, newEmail: normalizedEmail, changedBy: currentUser.nombre });
+      } else {
+        const temporaryPassword = Array.from(crypto.getRandomValues(new Uint8Array(18)), byte => (byte % 36).toString(36)).join("") + "A1!";
+        try {
+          updated = await createCRMUser({ nombre: user.nombre, email: normalizedEmail, password: temporaryPassword, rol: user.rol || "Vendedor", roles: user.roles || [user.rol || "Vendedor"], telefono: user.telefono || "", departamentosCobertura: user.departamentosCobertura || "", createdBy: currentUser });
+        } catch (creationError) {
+          if (!String(creationError?.code || "").includes("email-already-in-use")) throw creationError;
+          updated = { ...user, email: normalizedEmail, activo: true };
+        }
+        await sendCRMPasswordReset(normalizedEmail);
+      }
       persistVendedores(vendedores.map(item => item.id === user.id ? { ...item, ...updated, id: item.id } : item));
       window.alert(`Correo actualizado. Se envió a ${normalizedEmail} el enlace para establecer la nueva contraseña.`);
       return true;

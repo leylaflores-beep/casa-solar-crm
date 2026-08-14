@@ -33,6 +33,10 @@ El correo de acceso de un colaborador también puede modificarse desde **Equipo*
 
 El CRM admite usuarios con varios roles. Samuel Lemus se consolida como usuario especial con funciones de **Jefe técnico + Vendedor** y puede migrarse al correo correcto desde el botón disponible en **Equipo**.
 
+El acceso `casasolar.bodega.gt@gmail.com` tiene una protección específica para evitar que un estado antiguo del correo incorrecto cierre la sesión de Samuel. Publique siempre el archivo `firestore.rules` incluido.
+
+Los integrantes antiguos sin cuenta vinculada, como Carolina Custodio, pueden recibir un correo de acceso desde **Equipo**: al guardar el correo se crea o vincula la cuenta y se envía el restablecimiento seguro.
+
 La pantalla de ingreso permite mostrar u ocultar la contraseña escrita. Las contraseñas existentes nunca se muestran; Leyla puede definir la clave inicial al crear la cuenta o enviar un restablecimiento seguro al correo registrado.
 
 Los contactos guardados pueden eliminarse definitivamente desde su ficha. La operación exige confirmación escrita y elimina en una sola transacción sus cotizaciones, órdenes, seguimientos y referencias en campañas.

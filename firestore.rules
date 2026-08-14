@@ -6,6 +6,7 @@ service cloud.firestore {
       return request.auth != null && (
         request.auth.token.email == 'leyla.flores@gmail.com'
         || request.auth.token.email == 'ligiaeugeniamolina@gmail.com'
+        || request.auth.token.email == 'casasolar.bodega.gt@gmail.com'
         || !exists(/databases/$(database)/documents/crm_data/user_$(request.auth.uid))
         || get(/databases/$(database)/documents/crm_data/user_$(request.auth.uid)).data.activo != false
       );
