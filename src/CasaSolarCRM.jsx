@@ -120,6 +120,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
+const CRM_VERSION = "v52";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -732,11 +733,17 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   useEffect(() => {
     saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
   }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
-  const saveQuote = async () => {
+  const quotePayload = nextItems => {
+    const nextTotal = nextItems.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
     const commercial = { promocion: promocion.trim(), garantiaAnios: Number(garantiaAnios) || "", garantia: garantiaAnios ? `${Number(garantiaAnios)} años` : "" };
+    return initial
+      ? { ...initial, contactoId, items: nextItems, total: nextTotal, estado, notas, ...commercial }
+      : { contactoId, items: nextItems, total: nextTotal, estado, notas, ...commercial, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] };
+  };
+  const saveQuote = async () => {
     try {
       setSaving(true);
-      await onSave(initial ? { ...initial, contactoId, items, total, estado, notas, ...commercial } : { contactoId, items, total, estado, notas, ...commercial, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] });
+      await onSave(quotePayload(items));
       clearDraft(draftKey);
     } catch (error) {
       console.error("No se pudo guardar la cotización:", error);
@@ -744,7 +751,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
     } finally { setSaving(false); }
   };
 
-  const addItem = () => {
+  const addItem = async () => {
     const p = Number(precio);
     if (precio === "" || Number.isNaN(p) || p < 0) {
       setItemMessage("Escribe un precio cotizado válido antes de guardar el producto.");
@@ -757,12 +764,26 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
       altura: altura.trim(), compatibilidad: compatibilidad.trim(),
       cantidad: Number(cant) || 1, precioLista: Number(precioLista) || p, precioUnitario: p,
     };
-    setItems(list => editingItemId
-      ? list.map(item => item.id === editingItemId ? { ...nextItem, id: editingItemId } : item)
-      : [...list, nextItem]);
+    const nextItems = editingItemId
+      ? items.map(item => item.id === editingItemId ? { ...nextItem, id: editingItemId } : item)
+      : [...items, nextItem];
+    setItems(nextItems);
+    if (wasEditing && initial) {
+      try {
+        setSaving(true);
+        setItemMessage("Guardando el producto actualizado en Firebase…");
+        await onSave(quotePayload(nextItems));
+        clearDraft(draftKey);
+        return;
+      } catch (error) {
+        console.error("No se pudo guardar el producto editado:", error);
+        setItemMessage("No se pudo guardar en Firebase. El cambio permanece en pantalla; revisa la conexión e inténtalo nuevamente.");
+        return;
+      } finally { setSaving(false); }
+    }
     setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
     setDescripcion(productoNombre(prod)); setEditingItemId(null);
-    setItemMessage(wasEditing ? "Producto actualizado. Para finalizar, pulsa “Guardar cambios” al pie de la cotización." : "Producto agregado a la cotización.");
+    setItemMessage("Producto agregado a la cotización.");
   };
 
   const editItem = (item) => {
@@ -811,7 +832,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
 
           <div ref={itemEditorRef} className={editingItemId ? "quote-item-editor editing" : "quote-item-editor"}>
           <label className="field-label">{editingItemId ? "Editar producto seleccionado" : "Agregar producto o servicio"}</label>
-          {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Los datos del producto están cargados abajo. Realiza los cambios y pulsa <strong>Actualizar producto</strong>.</span></div>}
+          {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Modifica los datos y pulsa <strong>Actualizar y guardar</strong>. El cambio se enviará inmediatamente a Firebase.</span></div>}
           <div className="item-row quote-item-grid">
             <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {CATALOGO.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -821,7 +842,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
-            <button type="button" className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{editingItemId ? <><CheckCircle2 size={14} /> Actualizar producto</> : <><Plus size={14} /> Agregar</>}</button>
+            <button type="button" disabled={saving} className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{saving ? "Guardando…" : editingItemId ? <><CheckCircle2 size={14} /> Actualizar y guardar</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
           <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
@@ -1519,25 +1540,25 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
       {visibles.length === 0 ? (
         <div className="empty-state">Todavía no hay cotizaciones registradas.</div>
       ) : (
-        <table className="table">
+        <table className="table quote-list-table">
           <thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Vendedor</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody>
             {visibles.map(c => {
               const contacto = contactos.find(k => k.id === c.contactoId) || c.cliente;
               return (
                 <tr key={c.id}>
-                  <td><strong>{c.numero || "—"}</strong></td>
-                  <td>{fmtDate(c.fecha)}</td>
-                  <td>{contacto ? contacto.nombre : "—"}</td>
-                  <td>{c.items.map(nombreItem).join(", ")}</td>
-                  <td>{fmtMoney(c.total)}</td>
-                  <td>{c.vendedor}</td>
-                  <td>
+                  <td data-label="Número"><strong>{c.numero || "—"}</strong></td>
+                  <td data-label="Fecha">{fmtDate(c.fecha)}</td>
+                  <td data-label="Cliente">{contacto ? contacto.nombre : "—"}</td>
+                  <td data-label="Productos">{c.items.map(nombreItem).join(", ")}</td>
+                  <td data-label="Total">{fmtMoney(c.total)}</td>
+                  <td data-label="Vendedor">{c.vendedor}</td>
+                  <td data-label="Estado">
                     <select className="input compact" value={c.estado} onChange={e => onUpdateEstado(c.id, e.target.value)}>
                       {ESTADOS_COTIZACION.map(e => <option key={e} value={e}>{e}</option>)}
                     </select>
                   </td>
-                  <td><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
+                  <td data-label="Acciones"><CotizacionActions cotizacion={c} contacto={contacto} currentUser={currentUser} vendedores={vendedores} onUpdate={onUpdateCotizacion} ordenSugerida={ordenSugerida} /></td>
                 </tr>
               );
             })}
@@ -2445,6 +2466,7 @@ export default function CasaSolarCRM() {
         <div className="app-shell">
           <Sidebar tab={tab} setTab={(t) => { setTab(t); setSelectedId(null); }} currentUser={currentUser} cotizaciones={cotizaciones} descuentoSolicitudes={descuentoSolicitudes} onLogout={handleLogout} />
           <main className="main">
+            <div className="crm-version-badge">Casa Solar CRM · {CRM_VERSION}</div>
             {tab === "dashboard" && (
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
             )}
@@ -2529,6 +2551,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .user-role { font-size:11px; color:#9AA0A6; }
 
 .main { flex:1; min-width:0; padding: 26px 30px; overflow-y:auto; container-type:inline-size; }
+.crm-version-badge { display:flex; justify-content:flex-end; color:#8A8F98; font-size:10px; margin:-14px 0 8px; letter-spacing:.04em; }
 .mobile-logout { display:none; }
 .page-head { margin-bottom: 20px; }
 .page-head.row, .row { display:flex; align-items:center; justify-content:space-between; }
@@ -2847,6 +2870,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .mobile-logout { display:flex; }
   .sidebar-footer { display:none; }
   .main { width:100%; min-width:0; max-height:none; overflow:visible; padding:14px 10px 28px; }
+  .crm-version-badge { justify-content:center; margin:-4px 0 9px; font-size:9px; }
   .page-head { margin-bottom:14px; }
   .page-head.row, .row { align-items:stretch; flex-direction:column; gap:10px; }
   .page-head .btn-primary, .page-head .btn-ghost { width:100%; justify-content:center; }
@@ -2880,6 +2904,17 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .report-head { align-items:flex-start; flex-direction:column; }
   .sales-bar-row { grid-template-columns:52px minmax(80px,1fr) 90px; }
   .table { min-width:640px; }
+  .quote-list-table { min-width:0; width:100%; border-collapse:separate; border-spacing:0 12px; }
+  .quote-list-table thead { display:none; }
+  .quote-list-table tbody, .quote-list-table tr, .quote-list-table td { display:block; width:100%; }
+  .quote-list-table tr { background:#fff; border:1px solid #E4E0D8; border-radius:12px; padding:8px 11px 11px; box-shadow:0 2px 8px rgba(20,23,26,.05); overflow:hidden; }
+  .quote-list-table td { display:grid; grid-template-columns:82px minmax(0,1fr); gap:8px; align-items:start; border:0; border-bottom:1px solid #F0EEE7; padding:8px 0; white-space:normal; overflow-wrap:anywhere; font-size:12px; }
+  .quote-list-table td::before { content:attr(data-label); color:#8A8F98; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .quote-list-table td:last-child { display:block; border-bottom:0; padding-top:11px; }
+  .quote-list-table td:last-child::before { display:block; margin-bottom:8px; }
+  .quote-list-table .quote-actions { min-width:0; width:100%; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .quote-list-table .quote-actions button { width:100%; justify-content:center; min-width:0; }
+  .quote-list-table .input.compact { width:100%; min-width:0; }
   .preview-scroll, .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   .filters { flex-direction:column; }
   .search-box, .filter-select { width:100%; min-width:0; }
