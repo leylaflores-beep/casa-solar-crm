@@ -10,10 +10,12 @@ import {
   getSharedData,
   appendSharedData,
   createCRMUser,
+  deleteCRMContact,
   loginWithEmail,
   logoutFirebase,
   observeAuth,
   profileFromFirebaseUser,
+  replaceCRMUserEmail,
   savePublicCampaign,
   sendCRMPasswordReset,
   setCRMUserActive,
@@ -1261,7 +1263,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
   );
 }
 
-function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, currentUser, onBack, onUpdateContacto, onAddCotizacion, onUpdateCotizacion, onAddSeguimiento }) {
+function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, currentUser, onBack, onUpdateContacto, onDeleteContacto, onAddCotizacion, onUpdateCotizacion, onAddSeguimiento }) {
   const [modal, setModal] = useState(null);
   const misCot = cotizaciones.filter(c => c.contactoId === contacto.id);
   const orderYear = new Date().getFullYear();
@@ -1281,6 +1283,7 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
           <p className="muted">{contacto.telefono || "Sin teléfono"} {contacto.email ? "· " + contacto.email : ""}</p>
         </div>
         <button className="btn-ghost" onClick={() => setModal("editar-contacto")}><Edit3 size={15} /> Editar contacto</button>
+        {currentUser.rol === "Jefe" && <button className="btn-ghost delete-contact-btn" onClick={() => onDeleteContacto(contacto)}><Trash2 size={15}/> Eliminar definitivamente</button>}
         <select className="input" style={{ width: 170 }} value={contacto.estado}
           onChange={e => onUpdateContacto({ ...contacto, estado: e.target.value })}>
           {ESTADOS_CONTACTO.map(e => <option key={e} value={e}>{e}</option>)}
@@ -1522,7 +1525,7 @@ function CatalogoView() {
   );
 }
 
-function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, onUpdate, onResetPassword, onToggleAccess }) {
+function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, onUpdate, onResetPassword, onToggleAccess, onChangeEmail }) {
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [email, setEmail] = useState("");
@@ -1532,6 +1535,7 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
   const [departamentosCobertura, setDepartamentosCobertura] = useState("");
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  const [emailDrafts, setEmailDrafts] = useState({});
   const leylaCanCreate = String(currentUser.email || "").toLowerCase() === "leyla.flores@gmail.com";
 
   const createAccess = async () => {
@@ -1586,6 +1590,8 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
             <div key={v.id} className="mini-row">
               <input className="input compact" style={{ minWidth: 190, flex: 1 }} defaultValue={v.nombre} aria-label={`Nombre de ${v.nombre}`} onBlur={e => onUpdate({ ...v, nombre: e.target.value.trim() })} />
               <input className="input compact" style={{ flex: 1 }} defaultValue={v.telefono || ""} placeholder="Número de WhatsApp" onBlur={e => onUpdate({ ...v, telefono: e.target.value.trim() })} />
+              <input className="input compact" style={{ minWidth: 210, flex: 1 }} type="email" value={emailDrafts[v.id] ?? v.email ?? ""} placeholder="Correo de acceso" onChange={e => setEmailDrafts(current => ({ ...current, [v.id]: e.target.value }))} />
+              {(emailDrafts[v.id] ?? v.email ?? "").trim().toLowerCase() !== String(v.email || "").trim().toLowerCase() && <button className="btn-primary small" onClick={async () => { const saved = await onChangeEmail(v, emailDrafts[v.id]); if (saved) setEmailDrafts(current => { const next = { ...current }; delete next[v.id]; return next; }); }}>Guardar correo</button>}
               <span className={`badge ${v.activo === false ? "badge-gray" : "badge-green"}`}>{v.activo === false ? "Suspendido" : "Activo"}</span>
               {v.email && <button className="btn-ghost small" onClick={() => onResetPassword(v)} title="Enviar enlace de cambio al correo"><KeyRound size={14}/> Restablecer</button>}
               <button className="btn-ghost small" onClick={() => onToggleAccess(v, v.activo === false)}>{v.activo === false ? <><UserCheck size={14}/> Reactivar</> : <><UserX size={14}/> Suspender</>}</button>
@@ -2033,6 +2039,24 @@ export default function CasaSolarCRM() {
     const cliente = { id: updated.id, nombre: updated.nombre || "", telefono: updated.telefono || "", email: updated.email || "", dpi: updated.dpi || "", nit: updated.nit || "C/F", direccion: updated.direccion || "", municipio: updated.municipio || "", departamento: updated.departamento || "" };
     persistCotizaciones(cotizaciones.map(q => q.contactoId === updated.id ? { ...q, contactoNombre: updated.nombre, cliente } : q));
   };
+  const deleteContactoDefinitivo = async (contacto) => {
+    const linkedQuotes = cotizaciones.filter(item => item.contactoId === contacto.id).length;
+    const linkedFollowups = seguimientos.filter(item => item.contactoId === contacto.id).length;
+    const confirmation = window.prompt(`Esta acción es permanente. Se eliminará a ${contacto.nombre}, junto con ${linkedQuotes} cotización(es)/orden(es) y ${linkedFollowups} seguimiento(s). Escribe ELIMINAR para confirmar:`);
+    if (confirmation !== "ELIMINAR") return;
+    try {
+      await deleteCRMContact(contacto.id);
+      setContactos(current => current.filter(item => item.id !== contacto.id));
+      setCotizaciones(current => current.filter(item => item.contactoId !== contacto.id));
+      setSeguimientos(current => current.filter(item => item.contactoId !== contacto.id));
+      setCampaigns(current => current.map(campaign => ({ ...campaign, sends: (campaign.sends || []).filter(send => send.contactoId !== contacto.id) })));
+      setSelectedId(null);
+      window.alert(`${contacto.nombre} y toda su información relacionada fueron eliminados definitivamente.`);
+    } catch (error) {
+      console.error("No se pudo eliminar el contacto:", error);
+      window.alert("No se pudo eliminar el contacto. No se hizo una eliminación parcial; revisa la conexión e inténtalo nuevamente.");
+    }
+  };
   const assignContactos = async (ids, seller) => {
     const selectedIds = new Set(ids);
     persistContactos(contactos.map(item => selectedIds.has(item.id) ? { ...item, vendedor: seller } : item));
@@ -2171,6 +2195,33 @@ export default function CasaSolarCRM() {
       window.alert("No se pudo enviar el enlace. Verifica el correo y la conexión.");
     }
   };
+  const changeUserEmail = async (user, newEmail) => {
+    const normalizedEmail = String(newEmail || "").trim().toLowerCase();
+    if (String(user.email || "").toLowerCase() === "leyla.flores@gmail.com") {
+      window.alert("El correo principal de Leyla está protegido porque identifica a la administradora del CRM.");
+      return false;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      window.alert("Escribe un correo electrónico válido.");
+      return false;
+    }
+    if (vendedores.some(item => item.id !== user.id && String(item.email || "").toLowerCase() === normalizedEmail)) {
+      window.alert("Ese correo ya pertenece a otro usuario del CRM.");
+      return false;
+    }
+    if (!window.confirm(`¿Cambiar el acceso de ${user.nombre} de ${user.email || "sin correo"} a ${normalizedEmail}? El acceso anterior quedará suspendido y el nuevo correo recibirá un enlace para crear su contraseña.`)) return false;
+    try {
+      const updated = await replaceCRMUserEmail({ user, newEmail: normalizedEmail, changedBy: currentUser.nombre });
+      persistVendedores(vendedores.map(item => item.id === user.id ? { ...item, ...updated, id: item.id } : item));
+      window.alert(`Correo actualizado. Se envió a ${normalizedEmail} el enlace para establecer la nueva contraseña.`);
+      return true;
+    } catch (error) {
+      console.error("No se pudo cambiar el correo:", error);
+      const code = String(error?.code || "");
+      window.alert(code.includes("email-already-in-use") ? "Ese correo ya tiene una cuenta en Firebase." : "No se pudo actualizar el correo. Revisa la conexión e inténtalo nuevamente.");
+      return false;
+    }
+  };
   const toggleUserAccess = async (user, activate) => {
     if (String(user.email || "").toLowerCase() === "leyla.flores@gmail.com") return window.alert("El acceso principal de Leyla no puede suspenderse desde esta pantalla.");
     if (!window.confirm(`${activate ? "¿Reactivar" : "¿Suspender"} el acceso de ${user.nombre}?`)) return;
@@ -2223,7 +2274,7 @@ export default function CasaSolarCRM() {
             {tab === "contactos" && selectedContact && (
               <ContactDetail contacto={selectedContact} cotizaciones={cotizaciones} seguimientos={seguimientos}
                 vendedores={vendedores} currentUser={currentUser} onBack={() => setSelectedId(null)}
-                onUpdateContacto={updateContacto} onAddCotizacion={addCotizacion} onUpdateCotizacion={updateCotizacion} onAddSeguimiento={addSeguimiento} />
+                onUpdateContacto={updateContacto} onDeleteContacto={deleteContactoDefinitivo} onAddCotizacion={addCotizacion} onUpdateCotizacion={updateCotizacion} onAddSeguimiento={addSeguimiento} />
             )}
             {tab === "cotizaciones" && (
               <CotizacionesView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores}
@@ -2243,7 +2294,7 @@ export default function CasaSolarCRM() {
             {tab === "facturacion" && <OperationsView mode="facturacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "planificacion" && <PlanningView cotizaciones={cotizaciones} contactos={contactos} />}
             {tab === "equipo" && currentUser.rol === "Jefe" && (
-              <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} onResetPassword={resetUserPassword} onToggleAccess={toggleUserAccess} />
+              <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} onResetPassword={resetUserPassword} onToggleAccess={toggleUserAccess} onChangeEmail={changeUserEmail} />
             )}
           </main>
         </div>
@@ -2489,6 +2540,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .password-field { position:relative; display:block; }
 .password-field .input { padding-right:42px; }
 .password-field .icon-btn { position:absolute; right:5px; top:5px; }
+.delete-contact-btn { color:#B42318; border-color:#F2B8B5; }
+.delete-contact-btn:hover { background:#FDECEC; }
 .table-note { display:block; margin-top:4px; color:#8A8F98; font-size:11px; }
 .planning-filters .input { margin:0; max-width:220px; }
 .timeline-list { display:flex; flex-direction:column; gap:10px; }

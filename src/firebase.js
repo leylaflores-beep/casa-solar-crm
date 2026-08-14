@@ -94,6 +94,47 @@ export async function setCRMUserActive(uid, active, changedBy = "") {
   }, { merge: true });
 }
 
+export async function replaceCRMUserEmail({ user, newEmail, changedBy }) {
+  if (!user?.uid) throw new Error("El usuario no tiene un acceso de Firebase asociado.");
+  const normalizedEmail = newEmail.trim().toLowerCase();
+  const secondaryApp = getApps().find(item => item.name === "user-email-change")
+    || initializeApp(firebaseConfig, "user-email-change");
+  const secondaryAuth = getAuth(secondaryApp);
+  const temporaryPassword = Array.from(crypto.getRandomValues(new Uint8Array(18)), byte => (byte % 36).toString(36)).join("") + "A1!";
+  const credential = await createUserWithEmailAndPassword(secondaryAuth, normalizedEmail, temporaryPassword);
+  try {
+    await updateProfile(credential.user, { displayName: user.nombre || "Usuario CRM" });
+    await setDoc(doc(db, "crm_data", `user_${credential.user.uid}`), {
+      ...user,
+      uid: credential.user.uid,
+      email: normalizedEmail,
+      activo: true,
+      estadoAcceso: "Activo",
+      correoAnterior: user.email || "",
+      correoActualizadoEn: new Date().toISOString(),
+      correoActualizadoPor: changedBy,
+    });
+    await setCRMUserActive(user.uid, false, changedBy);
+  } finally {
+    await signOut(secondaryAuth);
+  }
+  await sendPasswordResetEmail(auth, normalizedEmail);
+  return { ...user, uid: credential.user.uid, email: normalizedEmail, activo: true, estadoAcceso: "Activo" };
+}
+
+export async function deleteCRMContact(contactId) {
+  const targets = ["contactos", "cotizaciones", "seguimientos", "campaigns"].map(name => doc(db, "crm_data", name));
+  await runTransaction(db, async transaction => {
+    const snapshots = await Promise.all(targets.map(target => transaction.get(target)));
+    const [contacts, quotes, followups, campaigns] = snapshots.map(snapshot => snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : []);
+    const now = new Date().toISOString();
+    transaction.set(targets[0], { value: contacts.filter(item => item.id !== contactId), updatedAt: now }, { merge: true });
+    transaction.set(targets[1], { value: quotes.filter(item => item.contactoId !== contactId), updatedAt: now }, { merge: true });
+    transaction.set(targets[2], { value: followups.filter(item => item.contactoId !== contactId), updatedAt: now }, { merge: true });
+    transaction.set(targets[3], { value: campaigns.map(campaign => ({ ...campaign, sends: (campaign.sends || []).filter(send => send.contactoId !== contactId) })), updatedAt: now }, { merge: true });
+  });
+}
+
 const documentName = (key) => key.replace("casasolar:", "").replace(/[^a-zA-Z0-9_-]/g, "_");
 
 export async function getSharedData(key) {

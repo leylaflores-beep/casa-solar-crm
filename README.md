@@ -29,6 +29,10 @@ Para activar las reglas incluidas, abre Firestore Database, entra en **Reglas**,
 
 La pantalla **Equipo** permite mostrar u ocultar la contraseña inicial, enviar restablecimientos por correo, suspender/reactivar accesos y eliminar colaboradores del listado sin borrar su historial comercial. Para que una suspensión bloquee también Firestore, publique las reglas incluidas en esta versión.
 
+El correo de acceso de un colaborador también puede modificarse desde **Equipo**. El acceso anterior queda suspendido y el nuevo correo recibe un enlace para crear su contraseña.
+
+Los contactos guardados pueden eliminarse definitivamente desde su ficha. La operación exige confirmación escrita y elimina en una sola transacción sus cotizaciones, órdenes, seguimientos y referencias en campañas.
+
 Las cuentas `leyla.flores@gmail.com` y `ligiaeugeniamolina@gmail.com` tienen rol de Jefe. Las demás cuentas autorizadas tienen rol de Vendedor. El sistema no permite registro público; las cuentas se crean desde Firebase Authentication.
 
 ## Clientes anteriores y campañas
