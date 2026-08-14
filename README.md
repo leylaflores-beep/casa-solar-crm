@@ -79,6 +79,7 @@ Desde Contactos, las cuentas con rol Jefe pueden seleccionar clientes visibles y
 ## Cotizaciones y órdenes de pedido
 
 - Numeración automática anual `CS-AAAA-0001`.
+- Al agregar una línea se puede elegir entre **Producto o servicio completo** y **Solo una parte del calentador**. La segunda opción permite cotizar tanque, tubos, estructura u otro repuesto indicando modelo, cantidad y precio; la parte aparece separadamente en la cotización y en su PDF.
 - Vigencia de 30 días y precios con IVA incluido.
 - Varias líneas por cotización con producto, descripción, tamaño, cantidad, precio de lista y precio cotizado.
 - PDF comercial basado en el formato corporativo negro, blanco y rojo de Casa Solar.

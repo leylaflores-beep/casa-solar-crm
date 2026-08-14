@@ -732,6 +732,9 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const [contactoId, setContactoId] = useState(savedDraft.contactoId || initial?.contactoId || initialContactId || (contactos[0]?.id || ""));
   const [items, setItems] = useState(() => (savedDraft.items || initial?.items || []).map(item => ({ ...item, id: item.id || uid() })));
   const [prod, setProd] = useState(savedDraft.prod || CATALOGO[0].id);
+  const [itemMode, setItemMode] = useState(savedDraft.itemMode || "producto");
+  const [heaterPart, setHeaterPart] = useState(savedDraft.heaterPart || "Tanque");
+  const [heaterModel, setHeaterModel] = useState(savedDraft.heaterModel || "");
   const [categoria, setCategoria] = useState(savedDraft.categoria || categoriaProducto(savedDraft.prod || CATALOGO[0].id));
   const [descripcion, setDescripcion] = useState(savedDraft.descripcion || CATALOGO[0].nombre);
   const [tamano, setTamano] = useState(savedDraft.tamano || "");
@@ -747,12 +750,12 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const [editingItemId, setEditingItemId] = useState(savedDraft.editingItemId || null);
   const [pendingTransport, setPendingTransport] = useState(() => initial ? null : readDraft(pendingTransportKey, null));
   const clienteSeleccionado = contactos.find(c => c.id === contactoId);
-  const esEstructura = String(prod).startsWith("estructura_");
+  const esEstructura = itemMode === "producto" && String(prod).startsWith("estructura_");
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precioUnitario, 0);
   useEffect(() => {
-    saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
-  }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
+    saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, itemMode, heaterPart, heaterModel, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
+  }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, itemMode, heaterPart, heaterModel, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
   const saveQuote = () => {
     clearDraft(draftKey);
     const commercial = { promocion: promocion.trim(), garantiaAnios: Number(garantiaAnios) || "", garantia: garantiaAnios ? `${Number(garantiaAnios)} años` : "" };
@@ -762,21 +765,27 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const addItem = () => {
     const p = Number(precio);
     if (precio === "" || Number.isNaN(p) || p < 0) return;
+    const isHeaterPart = itemMode === "parte";
+    const partDescription = `${heaterPart}${heaterModel.trim() ? ` para calentador ${heaterModel.trim()}` : " de calentador solar"}`;
     const nextItem = {
-      id: uid(), productoId: prod, productoNombre: productoNombre(prod), categoria,
-      descripcion: descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
+      id: uid(), productoId: isHeaterPart ? `componente_calentador_${normalizeIdentity(heaterPart)}` : prod,
+      productoNombre: isHeaterPart ? partDescription : productoNombre(prod), categoria: isHeaterPart ? "Accesorios" : categoria,
+      descripcion: isHeaterPart ? (descripcion.trim() || partDescription) : (descripcion.trim() || productoNombre(prod)), tamano: isHeaterPart ? heaterModel.trim() : tamano.trim(),
       altura: altura.trim(), compatibilidad: compatibilidad.trim(),
       cantidad: Number(cant) || 1, precioLista: Number(precioLista) || p, precioUnitario: p,
+      esParteCalentador: isHeaterPart, parteCalentador: isHeaterPart ? heaterPart : "", modeloCalentador: isHeaterPart ? heaterModel.trim() : "",
     };
     setItems(list => editingItemId
       ? list.map(item => item.id === editingItemId ? { ...nextItem, id: editingItemId } : item)
       : [...list, nextItem]);
     setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
-    setDescripcion(productoNombre(prod)); setEditingItemId(null);
+    setDescripcion(itemMode === "parte" ? "" : productoNombre(prod)); setEditingItemId(null);
   };
 
   const editItem = (item) => {
-    setEditingItemId(item.id); setProd(item.productoId || CATALOGO[0].id); setCategoria(item.categoria || categoriaProducto(item.productoId));
+    const isHeaterPart = item.esParteCalentador || String(item.productoId || "").startsWith("componente_calentador_");
+    setEditingItemId(item.id); setItemMode(isHeaterPart ? "parte" : "producto"); setProd(isHeaterPart ? CATALOGO[0].id : (item.productoId || CATALOGO[0].id)); setCategoria(item.categoria || categoriaProducto(item.productoId));
+    if (isHeaterPart) { setHeaterPart(item.parteCalentador || "Tanque"); setHeaterModel(item.modeloCalentador || item.tamano || ""); }
     setDescripcion(nombreItem(item));
     setTamano(item.tamano || ""); setCant(item.cantidad || 1);
     setAltura(item.altura || ""); setCompatibilidad(item.compatibilidad || "");
@@ -813,19 +822,28 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
 
           {pendingTransport && <div className="pending-transport-card"><div><ShoppingCart size={17} /><span><strong>Transporte calculado pendiente</strong><small>Importe: {fmtMoney(pendingTransport.precioUnitario)}. Los kilómetros y la tarifa permanecerán internos.</small></span></div><button className="btn-primary" onClick={addPendingTransport}><Plus size={16} /> Agregar a esta cotización</button></div>}
 
-          <label className="field-label">Agregar producto o servicio</label>
+          <label className="field-label">¿Qué deseas agregar a la cotización?</label>
+          <div className="quote-add-mode">
+            <button type="button" className={itemMode === "producto" ? "active" : ""} onClick={() => { setItemMode("producto"); setDescripcion(productoNombre(prod)); setCategoria(categoriaProducto(prod)); }}><Package size={16}/> Producto o servicio completo</button>
+            <button type="button" className={itemMode === "parte" ? "active" : ""} onClick={() => { setItemMode("parte"); setDescripcion(""); setCategoria("Accesorios"); setTamano(""); }}><Wrench size={16}/> Solo una parte del calentador</button>
+          </div>
+          {itemMode === "parte" && <div className="heater-part-fields">
+            <label><span className="field-label">Parte que necesita el cliente</span><select className="input" value={heaterPart} onChange={e => setHeaterPart(e.target.value)}><option>Tanque</option><option>Tubos</option><option>Estructura</option><option>Otro repuesto</option></select></label>
+            <label><span className="field-label">Modelo o tamaño del calentador</span><input className="input" value={heaterModel} onChange={e => setHeaterModel(e.target.value)} placeholder="Ej. CSG20 / 20 tubos" /></label>
+          </div>}
+          <label className="field-label">{itemMode === "parte" ? "Precio y descripción de la parte" : "Agregar producto o servicio"}</label>
           <div className="item-row quote-item-grid">
-            <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
+            {itemMode === "producto" ? <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {CATALOGO.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
-            <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Descripción específica" />
-            <input className="input" value={tamano} onChange={e => setTamano(e.target.value)} placeholder="Tamaño (ej. 25 tubos / 300 L)" />
+            </select> : <div className="selected-part-preview"><Wrench size={16}/><strong>{heaterPart}</strong></div>}
+            <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder={itemMode === "parte" ? `Detalle opcional de ${heaterPart.toLowerCase()}` : "Descripción específica"} />
+            {itemMode === "producto" ? <input className="input" value={tamano} onChange={e => setTamano(e.target.value)} placeholder="Tamaño (ej. 25 tubos / 300 L)" /> : <div className="selected-part-preview">{heaterModel || "Sin modelo indicado"}</div>}
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
             <button className="btn-ghost small" onClick={addItem}>{editingItemId ? <><CheckCircle2 size={14} /> Actualizar</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
-          <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>
+          {itemMode === "producto" && <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>}
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
 
           {items.length > 0 && (
@@ -2612,6 +2630,12 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .total-line { text-align:right; font-size:15px; padding:8px 0; font-family:'IBM Plex Mono',monospace; }
 .quote-item-grid { display:grid; grid-template-columns: 1.2fr 1.2fr 1fr 70px 110px 110px auto; align-items:start; }
 .quote-item-grid .input, .quote-item-grid .btn-ghost { width:100%; margin-bottom:8px; }
+.quote-add-mode { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin:7px 0 15px; }
+.quote-add-mode button { display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:9px 12px; border:1px solid #D9D5CC; border-radius:9px; background:#fff; color:#4A5568; cursor:pointer; font-weight:600; }
+.quote-add-mode button.active { border-color:#E30613; background:#FFF1F2; color:#9B1017; box-shadow:0 0 0 1px #E30613 inset; }
+.heater-part-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:13px; margin-bottom:14px; border:1px solid #F3B8BC; border-radius:10px; background:#FFF8F8; }
+.selected-part-preview { display:flex; align-items:center; gap:7px; min-height:39px; padding:9px 10px; border:1px solid #E4E0D8; border-radius:8px; background:#F7F5F0; color:#4A5568; font-size:12px; margin-bottom:8px; }
+.selected-part-preview svg { color:#E30613; flex-shrink:0; }
 .quote-category-row { display:flex; align-items:center; gap:12px; margin:-3px 0 12px; }
 .quote-category-row label { width:240px; flex-shrink:0; }
 .quote-category-row .input { margin-bottom:0; }
@@ -2822,6 +2846,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
   .kpi-value { font-size:18px; }
   .row-2 { grid-template-columns: 1fr; }
   .quote-item-grid { grid-template-columns:1fr; }
+  .quote-add-mode, .heater-part-fields { grid-template-columns:1fr; }
   .quote-category-row { align-items:stretch; flex-direction:column; }
   .quote-category-row label { width:100%; }
   .form-grid { grid-template-columns:1fr; }
