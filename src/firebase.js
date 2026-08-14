@@ -152,6 +152,25 @@ export async function deleteCRMContact(contactId) {
 
 const documentName = (key) => key.replace("casasolar:", "").replace(/[^a-zA-Z0-9_-]/g, "_");
 
+// Firestore rechaza una escritura completa si cualquier campo (incluso uno
+// anidado) contiene `undefined`. Los formularios pueden producir ese valor en
+// campos opcionales, por ejemplo fechaVenta mientras la cotización está
+// pendiente. Se omiten esos campos antes de guardar sin alterar valores
+// válidos como 0, false o cadenas vacías.
+const cleanForFirestore = value => {
+  if (Array.isArray(value)) {
+    return value.filter(item => item !== undefined).map(cleanForFirestore);
+  }
+  if (value && Object.prototype.toString.call(value) === "[object Object]") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, cleanForFirestore(item)])
+    );
+  }
+  return value;
+};
+
 export async function getSharedData(key) {
   const snapshot = await getDoc(doc(db, "crm_data", documentName(key)));
   return snapshot.exists() ? snapshot.data().value : null;
@@ -174,7 +193,9 @@ export async function appendSharedData(key, value) {
 // Agrega o actualiza registros por ID dentro de una transacción. Así una sesión
 // antigua nunca reemplaza los clientes, cotizaciones u órdenes de otros usuarios.
 export async function upsertSharedDataRecords(key, records) {
-  const incoming = (Array.isArray(records) ? records : [records]).filter(item => item?.id);
+  const incoming = (Array.isArray(records) ? records : [records])
+    .filter(item => item?.id)
+    .map(cleanForFirestore);
   if (!incoming.length) return [];
   const target = doc(db, "crm_data", documentName(key));
   return runTransaction(db, async transaction => {
@@ -199,7 +220,7 @@ export async function appendSharedQuote(key, quote, year) {
     const max = current
       .filter(item => String(item.numero || "").startsWith(`CS-${year}-`))
       .reduce((value, item) => Math.max(value, Number(String(item.numero).split("-").pop()) || 0), 0);
-    const created = { ...quote, numero: `CS-${year}-${String(max + 1).padStart(4, "0")}`, creadoEn: quote.creadoEn || new Date().toISOString() };
+    const created = cleanForFirestore({ ...quote, numero: `CS-${year}-${String(max + 1).padStart(4, "0")}`, creadoEn: quote.creadoEn || new Date().toISOString() });
     transaction.set(target, { value: [created, ...current], updatedAt: new Date().toISOString() }, { merge: true });
     return created;
   });

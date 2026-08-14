@@ -120,7 +120,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v52";
+const CRM_VERSION = "v53";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -2287,7 +2287,14 @@ export default function CasaSolarCRM() {
         totalConDescuento: updated.total,
         saldo: updated.ordenPedido.estadoPago === "Cancelado" ? "0" : String(Math.max(0, Number(updated.total || 0) - Number(updated.ordenPedido.abono || 0))),
       } : updated.ordenPedido;
-    const record = { ...updated, ordenPedido: syncedOrder, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO()) : updated.fechaVenta };
+    const saleDate = updated.estado === "Aceptada"
+      ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO())
+      : updated.fechaVenta;
+    const record = {
+      ...updated,
+      ordenPedido: syncedOrder,
+      ...(saleDate ? { fechaVenta: saleDate } : {}),
+    };
     const next = await upsertSharedDataRecords("casasolar:cotizaciones", record);
     setCotizaciones(next);
     const previousInstallationDate = previousQuote?.ordenPedido?.fechaInstalacion || "";
