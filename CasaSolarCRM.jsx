@@ -120,7 +120,8 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v52";
+const CRM_VERSION = "v54";
+const MASTER_CONTACT_EMAIL = "leyla.flores@gmail.com";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -131,6 +132,8 @@ const ESTADO_COLOR = {
 };
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const isContactMaster = user => String(user?.email || "").trim().toLowerCase() === MASTER_CONTACT_EMAIL;
+const canSeeContact = (contact, user) => isContactMaster(user) || contact?.vendedor === user?.nombre;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const seguimientoOrden = (s) => s.fechaHora || `${s.fecha || ""}T00:00:00`;
@@ -601,7 +604,8 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
     nombre: "", telefono: "", email: "", canal: "Llamada entrante",
     dpi: "", nit: "", direccion: "", departamento: "",
     productoInteres: CATALOGO[0].id, estado: "Nuevo",
-    vendedor: hasRole(currentUser, "Vendedor") && !hasRole(currentUser, "Jefe") ? currentUser.nombre : (vendedores[0]?.nombre || currentUser.nombre),
+    vendedor: currentUser.nombre,
+    privadoLeyla: isContactMaster(currentUser),
     permisoPromociones: "Pendiente de confirmar", notas: "", fecha: todayISO(),
   };
   const [form, setForm] = useState(() => readDraft(draftKey, defaultForm));
@@ -679,8 +683,9 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
             </div>
             <div>
               <label className="field-label">Vendedor asignado</label>
-              <select className="input" disabled={currentUser.rol !== "Jefe"} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
-                {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+              <select className="input" disabled={!isContactMaster(currentUser)} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
+                <option value={currentUser.nombre}>{isContactMaster(currentUser) ? "Privado de Leyla · sin asignar" : currentUser.nombre}</option>
+                {vendedores.filter(v => v.nombre !== currentUser.nombre).map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
               </select>
             </div>
           </div>
@@ -1325,17 +1330,18 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
 }
 
 function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onAssign, onOpen }) {
+  const isMaster = isContactMaster(currentUser);
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
-  const [filterVendedor, setFilterVendedor] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
+  const [filterVendedor, setFilterVendedor] = useState(isMaster ? "todos" : currentUser.nombre);
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState([]);
-  const [assignTo, setAssignTo] = useState(vendedores[0]?.nombre || "");
+  const [assignTo, setAssignTo] = useState("");
 
   const visibles = useMemo(() => {
     return contactos.filter(c => {
-      if (currentUser.rol !== "Jefe" && c.vendedor !== currentUser.nombre) return false;
+      if (!canSeeContact(c, currentUser)) return false;
       if (filterVendedor !== "todos" && c.vendedor !== filterVendedor) return false;
       if (filterEstado !== "todos" && c.estado !== filterEstado) return false;
       if (search && !c.nombre.toLowerCase().includes(search.toLowerCase()) && !c.telefono.includes(search)) return false;
@@ -1365,7 +1371,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
           <option value="todos">Todos los estados</option>
           {ESTADOS_CONTACTO.map(e => <option key={e} value={e}>{e}</option>)}
         </select>
-        {currentUser.rol === "Jefe" && (
+        {isMaster && (
           <select className="input filter-select" value={filterVendedor} onChange={e => setFilterVendedor(e.target.value)}>
             <option value="todos">Todos los vendedores</option>
             {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
@@ -1373,14 +1379,16 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         )}
       </div>
 
-      {currentUser.rol === "Jefe" && (
+      {isMaster && (
         <div className="bulk-bar">
           <label><input type="checkbox" checked={visibles.length > 0 && visibles.every(c => selected.includes(c.id))} onChange={e => setSelected(e.target.checked ? visibles.map(c => c.id) : [])} /> Seleccionar los {visibles.length} visibles</label>
           <span>{selected.length} seleccionados</span>
           <select className="input compact" value={assignTo} onChange={e => setAssignTo(e.target.value)}>
-            {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+            <option value="">Seleccionar vendedor</option>
+            <option value={currentUser.nombre}>Dejar privado para Leyla</option>
+            {vendedores.filter(v => v.nombre !== currentUser.nombre && (hasRole(v, "Vendedor") || v.rol === "Jefe técnico")).map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
           </select>
-          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={() => { onAssign(selected, assignTo); setSelected([]); }}><Users2 size={14} /> Asignar vendedor</button>
+          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={async () => { await onAssign(selected, assignTo); setSelected([]); setAssignTo(""); }}><Users2 size={14} /> Asignar contactos seleccionados</button>
         </div>
       )}
 
@@ -1392,11 +1400,11 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
             const Icon = canalIcon(c.canal);
             return (
               <div key={c.id} className="contact-row" onClick={() => onOpen(c.id)}>
-                {currentUser.rol === "Jefe" && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
+                {isMaster && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
                 <div className="channel-icon"><Icon size={16} /></div>
                 <div className="contact-main">
                   <div className="contact-name">{c.nombre}</div>
-                  <div className="contact-sub">{productoNombre(c.productoInteres)} · {c.vendedor}</div>
+                  <div className="contact-sub">{productoNombre(c.productoInteres)} · {isMaster && c.vendedor === currentUser.nombre ? "Privado de Leyla" : c.vendedor}</div>
                 </div>
                 <div className="contact-date muted">{fmtDate(c.fecha)}</div>
                 <Badge estado={c.estado} />
@@ -1411,7 +1419,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         <ContactModal vendedores={vendedores} currentUser={currentUser} onClose={() => setShowModal(false)}
           onSave={async (form) => { await onAdd(form); setShowModal(false); }} />
       )}
-      {showImport && <ExcelImportModal contactos={currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
+      {showImport && <ExcelImportModal contactos={isMaster ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
     </div>
   );
 }
@@ -2185,7 +2193,8 @@ export default function CasaSolarCRM() {
   };
 
   const addContacto = async (form) => {
-    const record = { ...form, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
+    const masterUpload = isContactMaster(currentUser);
+    const record = { ...form, vendedor: currentUser.nombre, privadoLeyla: masterUpload, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
     setContactos(current => [record, ...current]);
     try { setContactos(await upsertSharedDataRecords("casasolar:contactos", record)); }
     catch (error) { setContactos(current => current.filter(item => item.id !== record.id)); window.alert("No se pudo guardar el contacto en Firebase. Revisa la conexión e inténtalo nuevamente."); throw error; }
@@ -2198,11 +2207,12 @@ export default function CasaSolarCRM() {
     const changedRecords = [];
     rows.forEach(row => {
       const index = next.findIndex(item => (phone(row.telefono) && phone(item.telefono) === phone(row.telefono)) || name(item.nombre) === name(row.nombre));
-      if (index < 0) { const record = { ...row, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
-      const canUpdate = currentUser.rol === "Jefe" || next[index].vendedor === currentUser.nombre;
+      if (index < 0) { const record = { ...row, vendedor: currentUser.nombre, privadoLeyla: isContactMaster(currentUser), id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
+      const canUpdate = isContactMaster(currentUser) || next[index].vendedor === currentUser.nombre;
       if (!canUpdate) { skipped += 1; return; }
       if (mode === "update") {
-        const available = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== "" && value != null));
+        const protectedFields = new Set(["id", "vendedor", "privadoLeyla", "creadoPorEmail", "creadoEn", "asignadoPor", "asignadoPorEmail", "asignadoEn", "duplicate"]);
+        const available = Object.fromEntries(Object.entries(row).filter(([key, value]) => !protectedFields.has(key) && value !== "" && value != null));
         next[index] = { ...next[index], ...available, id: next[index].id };
         changedRecords.push(next[index]);
         updated += 1;
@@ -2242,8 +2252,11 @@ export default function CasaSolarCRM() {
     }
   };
   const assignContactos = async (ids, seller) => {
+    if (!isContactMaster(currentUser)) return window.alert("Solo Leyla puede asignar o reasignar contactos.");
     const selectedIds = new Set(ids);
-    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, vendedor: seller }));
+    const keepPrivate = seller === currentUser.nombre;
+    const assignment = { vendedor: seller, privadoLeyla: keepPrivate, asignadoPor: currentUser.nombre, asignadoPorEmail: currentUser.email || "", asignadoEn: new Date().toISOString() };
+    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, ...assignment }));
     const quoteChanges = cotizaciones.filter(item => selectedIds.has(item.contactoId)).map(item => ({ ...item, vendedor: seller }));
     if (contactChanges.length) setContactos(await upsertSharedDataRecords("casasolar:contactos", contactChanges));
     if (quoteChanges.length) setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", quoteChanges));
@@ -2287,7 +2300,14 @@ export default function CasaSolarCRM() {
         totalConDescuento: updated.total,
         saldo: updated.ordenPedido.estadoPago === "Cancelado" ? "0" : String(Math.max(0, Number(updated.total || 0) - Number(updated.ordenPedido.abono || 0))),
       } : updated.ordenPedido;
-    const record = { ...updated, ordenPedido: syncedOrder, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO()) : updated.fechaVenta };
+    const saleDate = updated.estado === "Aceptada"
+      ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO())
+      : updated.fechaVenta;
+    const record = {
+      ...updated,
+      ordenPedido: syncedOrder,
+      ...(saleDate ? { fechaVenta: saleDate } : {}),
+    };
     const next = await upsertSharedDataRecords("casasolar:cotizaciones", record);
     setCotizaciones(next);
     const previousInstallationDate = previousQuote?.ordenPedido?.fechaInstalacion || "";
