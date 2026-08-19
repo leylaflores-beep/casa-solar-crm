@@ -23,8 +23,8 @@ const normalize = value => clean(value).normalize("NFD").replace(/[\u0300-\u036f
 const phoneDigits = value => clean(value).replace(/\D/g, "").replace(/^502/, "");
 const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, "0")).join("");
 const PROMOTION_BASE_URL = "https://crm-casa-solar.web.app";
-const MASTER_CONTACT_EMAIL = "leyla.flores@gmail.com";
-const canSeeContact = (contact, user) => String(user?.email || "").trim().toLowerCase() === MASTER_CONTACT_EMAIL || contact?.vendedor === user?.nombre;
+const isContactBoss = user => user?.rol === "Jefe" || (Array.isArray(user?.roles) && user.roles.includes("Jefe"));
+const canSeeContact = (contact, user) => isContactBoss(user) || contact?.vendedor === user?.nombre;
 const promotionUrl = token => `${PROMOTION_BASE_URL}/p/${token}`;
 const valueBy = (row, names) => {
   const entry = Object.entries(row).find(([key]) => names.includes(normalize(key)));
@@ -49,6 +49,8 @@ const IMPORT_ALIASES = {
   promocion: ["promocion", "promotion", "discount", "descuento", "offer", "oferta"],
   formaPago: ["formadepago", "metododepago", "paymentmethod", "paymenttype", "payment", "pago"],
   vendedor: ["vendedor", "asesor", "ejecutivo", "salesperson", "salesrep", "seller", "owner"],
+  referido: ["referido", "esreferido", "clientereferido", "referral", "referred", "isreferral"],
+  referidoPor: ["referidopor", "referidoporproveedor", "proveedorquerefiere", "nombreproveedor", "referente", "referrer", "referredby", "referralname"],
   estado: ["estadocliente", "estado", "status", "customerstatus", "stage"],
   canal: ["canal", "origen", "fuente", "channel", "source", "leadsource"],
   sitioWeb: ["sitioweb", "paginaweb", "website", "web", "url"],
@@ -78,16 +80,20 @@ export function ExcelImportModal({ contactos, currentUser, onImport, onClose }) 
         const observaciones = importValue(row, "observaciones");
         const estadoArchivo = importValue(row, "estado");
         const canalArchivo = importValue(row, "canal");
+        const referidoArchivo = importValue(row, "referido");
+        const referidoPor = importValue(row, "referidoPor");
+        const esReferido = referidoPor || ["si", "yes", "true", "1"].includes(normalize(referidoArchivo)) ? "Sí" : "No";
         return {
           nombre, telefono: phoneDigits(importValue(row, "telefono")), email: importValue(row, "email"),
           dpi: importValue(row, "dpi"), nit: importValue(row, "nit"), sitioWeb: importValue(row, "sitioWeb"),
           direccion: [fisica, aldea, municipio].filter(Boolean).join(", "), departamento,
           municipio, productoComprado: producto, precioCompra: precio, promocionCompra: promocion, formaPagoCompra: pago,
           productoInteres: "calentadores", canal: canalArchivo || "Base histórica", estado: estadoArchivo || "Cliente anterior",
-          // La base siempre entra al usuario que la sube. Leyla puede asignarla
-          // posteriormente desde Contactos; una columna del Excel nunca cambia
-          // la propiedad de manera automática.
+          // La base siempre entra al usuario que la sube. Los usuarios Jefe
+          // pueden asignarla posteriormente desde Contactos; una columna del
+          // Excel nunca cambia la propiedad de manera automática.
           vendedor: currentUser.nombre,
+          esReferido, referidoPor: esReferido === "Sí" ? referidoPor : "",
           permisoPromociones: "Pendiente de confirmar", fecha: new Date().toISOString().slice(0, 10),
           notas: [observaciones, producto && `Producto anterior: ${producto}`, precio && `Precio: ${precio}`, promocion && `Promoción: ${promocion}`, pago && `Forma de pago: ${pago}`].filter(Boolean).join(" · "),
         };
