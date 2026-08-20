@@ -24,7 +24,12 @@ const phoneDigits = value => clean(value).replace(/\D/g, "").replace(/^502/, "")
 const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, "0")).join("");
 const PROMOTION_BASE_URL = "https://crm-casa-solar.web.app";
 const isContactBoss = user => user?.rol === "Jefe" || (Array.isArray(user?.roles) && user.roles.includes("Jefe"));
-const canSeeContact = (contact, user) => isContactBoss(user) || contact?.vendedor === user?.nombre;
+const canSeeContact = (contact, user) => {
+  if (isContactBoss(user)) return true;
+  const email = clean(user?.email).toLowerCase();
+  const ownerEmails = [contact?.propietarioEmail, contact?.creadoPorEmail, contact?.vendedorEmail, contact?.asignadoAEmail].map(value => clean(value).toLowerCase()).filter(Boolean);
+  return Boolean(email && ownerEmails.includes(email)) || normalize(contact?.vendedor) === normalize(user?.nombre);
+};
 const promotionUrl = token => `${PROMOTION_BASE_URL}/p/${token}`;
 const valueBy = (row, names) => {
   const entry = Object.entries(row).find(([key]) => names.includes(normalize(key)));

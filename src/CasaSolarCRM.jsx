@@ -121,7 +121,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v60";
+const CRM_VERSION = "v61";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -133,7 +133,17 @@ const ESTADO_COLOR = {
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const isContactBoss = user => hasRole(user, "Jefe");
-const canSeeContact = (contact, user) => isContactBoss(user) || contact?.vendedor === user?.nombre;
+const normalizedEmail = value => String(value || "").trim().toLowerCase();
+const recordBelongsToUser = (record, user) => {
+  const email = normalizedEmail(user?.email);
+  const recordEmails = [record?.propietarioEmail, record?.creadoPorEmail, record?.vendedorEmail, record?.asignadoAEmail]
+    .map(normalizedEmail).filter(Boolean);
+  return Boolean(email && recordEmails.includes(email))
+    || normalizeIdentity(record?.vendedor) === normalizeIdentity(user?.nombre);
+};
+const canSeeContact = (contact, user) => isContactBoss(user) || recordBelongsToUser(contact, user);
+const canSeeQuote = (quote, user) => isContactBoss(user) || recordBelongsToUser(quote, user);
+const canSeeFollowup = (followup, user) => isContactBoss(user) || recordBelongsToUser(followup, user);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const seguimientoOrden = (s) => s.fechaHora || `${s.fecha || ""}T00:00:00`;
@@ -326,7 +336,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [attachedMessage, setAttachedMessage] = useState("");
   const [pendingSaved, setPendingSaved] = useState(false);
-  const visibleQuotes = currentUser.rol === "Jefe" ? cotizaciones : cotizaciones.filter(item => item.vendedor === currentUser.nombre);
+  const visibleQuotes = cotizaciones.filter(item => canSeeQuote(item, currentUser));
 
   const geocode = async (query) => {
     const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=gt&limit=1&q=${encodeURIComponent(query)}`;
@@ -606,15 +616,15 @@ function HeaterCostCalculator() {
 }
 
 function Dashboard({ contactos, cotizaciones, seguimientos, currentUser, vendedores }) {
-  const misContactos = currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre);
-  const misCot = currentUser.rol === "Jefe" ? cotizaciones : cotizaciones.filter(c => c.vendedor === currentUser.nombre);
+  const misContactos = contactos.filter(c => canSeeContact(c, currentUser));
+  const misCot = cotizaciones.filter(c => canSeeQuote(c, currentUser));
   const hoy = todayISO();
   const nuevosHoy = misContactos.filter(c => c.fecha === hoy).length;
   const ganados = misContactos.filter(c => c.estado === "Ganado").length;
   const total = misContactos.length;
   const tasaCierre = total ? Math.round((ganados / total) * 100) : 0;
   const montoCotizado = misCot.reduce((s, c) => s + (c.total || 0), 0);
-  const seguimientosPendientes = (currentUser.rol === "Jefe" ? seguimientos : seguimientos.filter(s => s.vendedor === currentUser.nombre))
+  const seguimientosPendientes = seguimientos.filter(s => canSeeFollowup(s, currentUser))
     .filter(s => s.proximoSeguimiento && s.proximoSeguimiento <= hoy);
 
   const porVendedor = vendedores.map(v => ({
@@ -1440,7 +1450,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
   const isBoss = isContactBoss(currentUser);
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
-  const [filterVendedor, setFilterVendedor] = useState(isBoss ? "todos" : currentUser.nombre);
+  const [filterVendedor, setFilterVendedor] = useState("todos");
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState([]);
@@ -1526,7 +1536,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         <ContactModal vendedores={vendedores} currentUser={currentUser} onClose={() => setShowModal(false)}
           onSave={async (form) => { await onAdd(form); setShowModal(false); }} />
       )}
-      {showImport && <ExcelImportModal contactos={isBoss ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
+      {showImport && <ExcelImportModal contactos={contactos.filter(c => canSeeContact(c, currentUser))} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
     </div>
   );
 }
@@ -1631,7 +1641,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
   const [showModal, setShowModal] = useState(false);
   const [filterEstado, setFilterEstado] = useState("todos");
   const visibles = cotizaciones.filter(c => {
-    if (currentUser.rol !== "Jefe" && c.vendedor !== currentUser.nombre) return false;
+    if (!canSeeQuote(c, currentUser)) return false;
     if (filterEstado !== "todos" && c.estado !== filterEstado) return false;
     return true;
   }).sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -1723,7 +1733,7 @@ function SeguimientoHiloModal({ contacto, seguimientos, onClose, onAdd }) {
 function SeguimientosView({ seguimientos, contactos, currentUser, onAdd }) {
   const [newContactId, setNewContactId] = useState("");
   const [threadContactId, setThreadContactId] = useState("");
-  const visibles = seguimientos.filter(s => currentUser.rol === "Jefe" || s.vendedor === currentUser.nombre)
+  const visibles = seguimientos.filter(s => canSeeFollowup(s, currentUser))
     .sort((a, b) => seguimientoOrden(b).localeCompare(seguimientoOrden(a)));
   const hilos = Object.values(visibles.reduce((acc, s) => {
     const key = s.contactoId;
@@ -2060,7 +2070,7 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
   const [year, setYear] = useState(String(now.getFullYear()));
   const [from, setFrom] = useState(`${now.getFullYear()}-01-01`);
   const [to, setTo] = useState(todayISO());
-  const [seller, setSeller] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
+  const [seller, setSeller] = useState("todos");
   const sellerUsers = vendedores.filter(user => ["Vendedor", "Jefe"].includes(user.rol || "Vendedor"));
   const inPeriod = dateValue => {
     const date = String(dateValue || "").slice(0, 10);
@@ -2070,12 +2080,12 @@ function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
   };
   const sold = cotizaciones.filter(quote => {
     if (quote.estado !== "Aceptada" && quote.ordenPedido?.estadoPago !== "Cancelado") return false;
-    if (currentUser.rol !== "Jefe" && quote.vendedor !== currentUser.nombre) return false;
+    if (!canSeeQuote(quote, currentUser)) return false;
     if (seller !== "todos" && quote.vendedor !== seller) return false;
     return inPeriod(quote.ordenPedido?.fechaCancelado || quote.fechaVenta || quote.fecha);
   });
   const advanceDate = quote => quote.ordenPedido?.fechaAnticipo || quote.ordenPedido?.actualizadoEn || quote.fechaVenta || quote.fecha;
-  const advances = cotizaciones.filter(quote => Number(quote.ordenPedido?.abono || 0) > 0 && inPeriod(advanceDate(quote)) && (currentUser.rol === "Jefe" || quote.vendedor === currentUser.nombre) && (seller === "todos" || quote.vendedor === seller));
+  const advances = cotizaciones.filter(quote => Number(quote.ordenPedido?.abono || 0) > 0 && inPeriod(advanceDate(quote)) && canSeeQuote(quote, currentUser) && (seller === "todos" || quote.vendedor === seller));
   const advanceAmount = advances.reduce((sum, quote) => sum + Number(quote.ordenPedido?.abono || 0), 0);
   const total = sold.reduce((sum, quote) => sum + Number(quote.total || 0), 0);
   const average = sold.length ? total / sold.length : 0;
@@ -2179,7 +2189,14 @@ export default function CasaSolarCRM() {
       const samuelConsolidation = consolidateSamuelUser(v || []);
       let sellerList = samuelConsolidation.team;
       if (samuelConsolidation.changed) await storageSet("casasolar:vendedores", sellerList, true);
-      const linkedSeller = sellerList.find(item => item.uid === profile.uid || item.email === profile.email || item.nombre === profile.nombre);
+      let linkedSeller = sellerList.find(item => item.uid === profile.uid || normalizedEmail(item.email) === normalizedEmail(profile.email) || normalizeIdentity(item.nombre) === normalizeIdentity(profile.nombre));
+      // Usuarios antiguos pueden tener acceso en Authentication, pero su fila de
+      // Equipo no guardó correo ni UID. Se recupera el nombre comercial desde
+      // los contactos creados por ese mismo correo y se enlaza automáticamente.
+      if (!linkedSeller) {
+        const ownedContact = c.find(item => [item.propietarioEmail, item.creadoPorEmail].map(normalizedEmail).includes(normalizedEmail(profile.email)) && item.vendedor);
+        if (ownedContact) linkedSeller = sellerList.find(item => normalizeIdentity(item.nombre) === normalizeIdentity(ownedContact.vendedor));
+      }
       if (linkedSeller?.activo === false && profile.email !== SAMUEL_CORRECT_EMAIL) {
         await setCRMUserActive(profile.uid, false, "Validación automática del CRM");
         await logoutFirebase();
@@ -2320,7 +2337,7 @@ export default function CasaSolarCRM() {
     rows.forEach(row => {
       const index = next.findIndex(item => (phone(row.telefono) && phone(item.telefono) === phone(row.telefono)) || name(item.nombre) === name(row.nombre));
       if (index < 0) { const record = { ...row, vendedor: currentUser.nombre, propietarioEmail: currentUser.email || "", id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
-      const canUpdate = isContactBoss(currentUser) || next[index].vendedor === currentUser.nombre;
+      const canUpdate = canSeeContact(next[index], currentUser);
       if (!canUpdate) { skipped += 1; return; }
       if (mode === "update") {
         const protectedFields = new Set(["id", "vendedor", "privadoLeyla", "creadoPorEmail", "creadoEn", "asignadoPor", "asignadoPorEmail", "asignadoEn", "duplicate"]);
