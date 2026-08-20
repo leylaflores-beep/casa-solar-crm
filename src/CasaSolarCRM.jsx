@@ -121,7 +121,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v59";
+const CRM_VERSION = "v60";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -490,6 +490,10 @@ function StructureCalculator() {
   const [vatRate, setVatRate] = useState(String(saved.vatRate ?? 12));
   const [commissionRate, setCommissionRate] = useState(String(saved.commissionRate ?? 5));
   const [profitRate, setProfitRate] = useState(String(saved.profitRate ?? 5));
+  const [height, setHeight] = useState(String(saved.height ?? "2.5"));
+  const [supports, setSupports] = useState(String(saved.supports ?? "4"));
+  const [barLength, setBarLength] = useState(String(saved.barLength ?? "6"));
+  const [wasteRate, setWasteRate] = useState(String(saved.wasteRate ?? "10"));
   const template = STRUCTURE_TEMPLATES.find(item => item.id === templateId) || STRUCTURE_TEMPLATES[0];
   const materialTotal = materials.reduce((sum, item) => sum + Math.max(0, Number(item.quantity)||0) * Math.max(0, Number(item.unitPrice)||0), 0);
   const directCost = materialTotal + Math.max(0, Number(labor)||0) + Math.max(0, Number(transport)||0) + Math.max(0, Number(depreciation)||0);
@@ -497,10 +501,24 @@ function StructureCalculator() {
   const commission = directCost * Math.max(0, Number(commissionRate)||0) / 100;
   const profit = (directCost + vat) * Math.max(0, Number(profitRate)||0) / 100;
   const salePrice = directCost + vat + commission + profit;
-  useEffect(() => saveDraft(draftKey, { templateId, roof, materials, labor, transport, depreciation, vatRate, commissionRate, profitRate }), [templateId, roof, materials, labor, transport, depreciation, vatRate, commissionRate, profitRate]);
+  const acceptsHeight = template.group.startsWith("Elevación");
+  const requiredVerticalLength = Math.max(0, Number(height)||0) * Math.max(1, Number(supports)||1);
+  const lengthWithWaste = requiredVerticalLength * (1 + Math.max(0, Number(wasteRate)||0) / 100);
+  const verticalBars = Math.ceil(lengthWithWaste / Math.max(.1, Number(barLength)||6));
+  const verticalProfile = template.id.startsWith("tank-17") || template.id.startsWith("tank-25") ? "Tubo cuadrado 3×3 chapa 16" : "Angular 2 pulg. para postes";
+  useEffect(() => saveDraft(draftKey, { templateId, roof, materials, labor, transport, depreciation, vatRate, commissionRate, profitRate, height, supports, barLength, wasteRate }), [templateId, roof, materials, labor, transport, depreciation, vatRate, commissionRate, profitRate, height, supports, barLength, wasteRate]);
   const chooseTemplate = id => { const next=STRUCTURE_TEMPLATES.find(item=>item.id===id); setTemplateId(id); setMaterials(structureRows(next)); setLabor(String(next.labor)); setTransport(String(next.transport)); setDepreciation(String(next.depreciation)); };
   const updateMaterial = (id,key,value) => setMaterials(rows => rows.map(row => row.id===id ? {...row,[key]:value}:row));
   const addMaterial = () => setMaterials(rows => [...rows,{id:uid(),name:"Material adicional",quantity:"1",unitPrice:"0",unit:"unidad"}]);
+  const applyHeight = () => {
+    if (!acceptsHeight || Number(height) <= 0 || Number(barLength) <= 0) return;
+    const id = `${template.id}-postes-altura`;
+    setMaterials(rows => {
+      const previous = rows.find(row => row.id === id);
+      const row = { id, name:`${verticalProfile} (${supports} postes × ${height} m)`, quantity:String(verticalBars), unitPrice:previous?.unitPrice || "0", unit:`barra de ${barLength} m` };
+      return previous ? rows.map(item => item.id===id ? row:item) : [row,...rows];
+    });
+  };
   return <div>
     <div className="page-head row"><div><h2>Calculadora de estructuras</h2><p>Selecciona una estructura, confirma los materiales y calcula el precio sugerido de venta.</p></div><button className="btn-ghost" onClick={()=>chooseTemplate(templateId)}>Restablecer este modelo</button></div>
     <div className="structure-guide"><strong>1. Elige el modelo</strong><span>2. Revisa cantidades y precios</span><span>3. Confirma costos y precio de venta</span></div>
@@ -509,6 +527,7 @@ function StructureCalculator() {
         <div className="section-title"><Wrench size={20}/><div><h3>Tipo de estructura</h3><p>Las cantidades iniciales provienen de tus hojas de materiales.</p></div></div>
         <label><span className="field-label">Estructura y capacidad</span><select className="input" value={templateId} onChange={e=>chooseTemplate(e.target.value)}>{[...new Set(STRUCTURE_TEMPLATES.map(item=>item.group))].map(group=><optgroup key={group} label={group}>{STRUCTURE_TEMPLATES.filter(item=>item.group===group).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>)}</select></label>
         {template.roof && <label><span className="field-label">Tipo de techo</span><select className="input" value={roof} onChange={e=>setRoof(e.target.value)}><option>Lámina galvanizada</option><option>Terraza</option><option>Teja sobre terraza</option><option>Teja tradicional</option><option>Otro / pendiente de visita</option></select></label>}
+        {acceptsHeight && <div className="height-calculator"><h3>Cálculo de postes por altura</h3><p>Indica la altura terminada. El sistema redondeará hacia arriba las barras comerciales necesarias para los postes verticales.</p><div className="form-grid"><label><span className="field-label">Altura de la estructura (m)</span><input className="input" type="number" min="0.1" step="0.1" value={height} onChange={e=>setHeight(e.target.value)}/></label><label><span className="field-label">Cantidad de postes</span><input className="input" type="number" min="1" step="1" value={supports} onChange={e=>setSupports(e.target.value)}/></label><label><span className="field-label">Largo de cada barra comercial (m)</span><input className="input" type="number" min="0.1" step="0.1" value={barLength} onChange={e=>setBarLength(e.target.value)}/></label><label><span className="field-label">Desperdicio y cortes (%)</span><input className="input" type="number" min="0" step="1" value={wasteRate} onChange={e=>setWasteRate(e.target.value)}/></label></div><div className="height-result"><span>{supports || 0} postes × {height || 0} m = {requiredVerticalLength.toFixed(2)} m; con desperdicio: {lengthWithWaste.toFixed(2)} m</span><strong>{verticalBars} barra{verticalBars===1?"":"s"} de {Number(barLength||0).toFixed(2)} m</strong></div><button className="btn-primary" type="button" onClick={applyHeight}><Calculator size={16}/> Agregar postes calculados a materiales</button><small>Este cálculo agrega únicamente el material de los postes. La base, travesaños, diagonales, anclajes y consumibles permanecen en la plantilla.</small></div>}
         <h3>Materiales requeridos</h3>
         <div className="structure-materials"><div className="structure-material-head"><span>Material</span><span>Cantidad</span><span>Precio unitario</span><span>Subtotal</span><span></span></div>{materials.map(item=><div className="structure-material-row" key={item.id}><input className="input" value={item.name} onChange={e=>updateMaterial(item.id,"name",e.target.value)}/><label><input className="input" type="number" min="0" step="0.125" value={item.quantity} onChange={e=>updateMaterial(item.id,"quantity",e.target.value)}/><small>{item.unit}</small></label><input className="input" type="number" min="0" step="0.01" value={item.unitPrice} onChange={e=>updateMaterial(item.id,"unitPrice",e.target.value)}/><strong>{fmtMoney((Number(item.quantity)||0)*(Number(item.unitPrice)||0))}</strong><button className="icon-btn" onClick={()=>setMaterials(rows=>rows.filter(row=>row.id!==item.id))} aria-label="Quitar material"><Trash2 size={15}/></button></div>)}</div>
         <button className="btn-ghost" onClick={addMaterial}><Plus size={15}/> Agregar material</button>
@@ -2152,6 +2171,11 @@ export default function CasaSolarCRM() {
         storageGet("casasolar:campaigns", true),
         storageGet("casasolar:descuentos", true),
       ]);
+      if (!Array.isArray(c)) {
+        window.alert("Firebase no entregó el documento de contactos. No se reemplazará por una lista vacía. Recarga la página y revisa la conexión.");
+        setLoading(false);
+        return;
+      }
       const samuelConsolidation = consolidateSamuelUser(v || []);
       let sellerList = samuelConsolidation.team;
       if (samuelConsolidation.changed) await storageSet("casasolar:vendedores", sellerList, true);
@@ -2900,6 +2924,13 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .structure-percentages label>span:last-child { display:flex; align-items:center; gap:4px; }
 .structure-warning { display:flex; gap:8px; padding:11px; border-radius:9px; background:#fff8e8; color:#755100; font-size:12px; line-height:1.45; }
 .structure-warning svg { flex:0 0 auto; margin-top:1px; }
+.height-calculator { margin:16px 0; padding:14px; border:1px solid #f1c4c8; border-radius:12px; background:#fffafb; }
+.height-calculator h3 { margin:0 0 4px; }
+.height-calculator>p,.height-calculator>small { color:var(--muted); line-height:1.45; }
+.height-calculator .form-grid { margin:12px 0; }
+.height-result { display:flex; justify-content:space-between; gap:10px; align-items:center; margin:10px 0; padding:10px; border-radius:9px; background:#f4f7f3; }
+.height-result span { font-size:12px; color:var(--muted); }
+.height-result strong { color:#237a32; white-space:nowrap; }
 .cost-parts-editor { display:flex; flex-direction:column; gap:8px; margin:10px 0 14px; }
 .cost-part-input { display:grid; grid-template-columns:minmax(120px,1fr) 110px 120px; gap:8px; align-items:center; }
 .cost-part-input .input { margin:0; }

@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
-import { arrayUnion, doc, getDoc, initializeFirestore, onSnapshot, persistentLocalCache, persistentMultipleTabManager, runTransaction, setDoc, updateDoc } from "firebase/firestore";
+import { arrayUnion, doc, getDoc, getDocFromServer, initializeFirestore, memoryLocalCache, onSnapshot, runTransaction, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCkDZgfSyIM_KwfA68w5cRN9jj-S4lSeJU",
@@ -14,7 +14,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  // La información comercial vive en Firestore. Una caché persistente dañada o
+  // antigua puede mostrar listas vacías aunque los documentos sigan en línea.
+  // La caché en memoria evita que un navegador conserve ese estado entre versiones.
+  localCache: memoryLocalCache(),
 });
 const auth = getAuth(app);
 
@@ -172,7 +175,15 @@ const cleanForFirestore = value => {
 };
 
 export async function getSharedData(key) {
-  const snapshot = await getDoc(doc(db, "crm_data", documentName(key)));
+  const target = doc(db, "crm_data", documentName(key));
+  let snapshot;
+  try {
+    snapshot = await getDocFromServer(target);
+  } catch (serverError) {
+    // Si la conexión cae, todavía se intenta la caché de la sesión actual.
+    snapshot = await getDoc(target);
+    if (!snapshot.exists()) throw serverError;
+  }
   return snapshot.exists() ? snapshot.data().value : null;
 }
 
@@ -242,7 +253,7 @@ export async function updateSharedDataRecords(key, ids, changes) {
 }
 
 export function subscribeSharedData(key, callback, onError) {
-  return onSnapshot(doc(db, "crm_data", documentName(key)), snapshot => {
+  return onSnapshot(doc(db, "crm_data", documentName(key)), { includeMetadataChanges: true }, snapshot => {
     callback(snapshot.exists() ? snapshot.data().value : null);
   }, onError);
 }
