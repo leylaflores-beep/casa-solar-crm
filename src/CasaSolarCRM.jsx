@@ -37,6 +37,7 @@ const userRoles = user => [...new Set([user?.rol, ...(Array.isArray(user?.roles)
 const hasRole = (user, role) => userRoles(user).includes(role);
 const roleLabel = user => userRoles(user).join(" + ") || "Usuario";
 const SAMUEL_CORRECT_EMAIL = "casasolar.bodega.gt@gmail.com";
+const canUseStructureCalculator = user => hasRole(user, "Jefe") || String(user?.email || "").toLowerCase() === SAMUEL_CORRECT_EMAIL || normalizeIdentity(user?.nombre) === "samuellemus";
 const SAMUEL_WRONG_EMAIL = "casasolar.bodegagt@gmail.com";
 const normalizeIdentity = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const consolidateSamuelUser = team => {
@@ -120,7 +121,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v53";
+const CRM_VERSION = "v59";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -131,6 +132,8 @@ const ESTADO_COLOR = {
 };
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const isContactBoss = user => hasRole(user, "Jefe");
+const canSeeContact = (contact, user) => isContactBoss(user) || contact?.vendedor === user?.nombre;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const seguimientoOrden = (s) => s.fechaHora || `${s.fecha || ""}T00:00:00`;
@@ -242,7 +245,8 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "dashboard", label: "Panel", icon: LayoutDashboard },
     { id: "contactos", label: "Contactos", icon: Users2 },
     { id: "calculadora", label: "Calculadora de rutas", icon: Calculator },
-    { id: "calculadora-costos", label: "Calculadora de costos", icon: CircleDollarSign },
+    ...(hasRole(currentUser, "Jefe") ? [{ id: "calculadora-costos", label: "Calculadora de costos", icon: CircleDollarSign }] : []),
+    ...(canUseStructureCalculator(currentUser) ? [{ id: "calculadora-estructuras", label: "Calculadora de estructuras", icon: Wrench }] : []),
     { id: "cotizaciones", label: "Cotizaciones", icon: FileText },
     { id: "reportes", label: "Reportes de ventas", icon: BarChart3 },
     { id: "seguimientos", label: "Seguimientos", icon: ClipboardList },
@@ -453,6 +457,75 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   );
 }
 
+const STRUCTURE_TEMPLATES = [
+  { id:"cost-csg15", group:"Costanera", name:"Costanera CSG15", roof:true, materials:[["Costanera",1,150,"unidad"]], labor:15, transport:30, depreciation:15 },
+  { id:"cost-csg20", group:"Costanera", name:"Costanera CSG20", roof:true, materials:[["Costanera",2,150,"unidad"]], labor:15, transport:30, depreciation:15 },
+  { id:"cost-csg2530", group:"Costanera", name:"Costanera CSG25 / CSG30", roof:true, materials:[["Costanera",3,150,"unidad"]], labor:15, transport:30, depreciation:15 },
+  { id:"cost-csg36", group:"Costanera", name:"Costanera CSG36", roof:true, materials:[["Costanera",4,150,"unidad"]], labor:40, transport:40, depreciation:15 },
+  { id:"nivel-csg1520", group:"Nivelación", name:"Nivelación CSG15 / CSG20", roof:true, materials:[["Angular 1 1/2 pulg. milimétrico",3,90,"unidad"],["Pintura anticorrosiva negra",0.125,130,"galón"],["Brocha",1,5,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",1,20.5,"libra"],["Solvente / thinner",0.25,60,"galón"]], labor:40, transport:40, depreciation:15 },
+  { id:"nivel-csg2530", group:"Nivelación", name:"Nivelación CSG25 / CSG30", roof:true, materials:[["Angular 1 1/2 pulg. milimétrico",5,90,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",2,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Solvente / thinner",0.5,60,"galón"],["Brocha",2,10,"unidad"]], labor:60, transport:40, depreciation:15 },
+  { id:"nivel-csg36", group:"Nivelación", name:"Nivelación CSG36", roof:true, materials:[["Angular 1 1/2 pulg. milimétrico",7,90,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",2,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Solvente / thinner",0.5,60,"galón"],["Brocha",2,10,"unidad"]], labor:80, transport:50, depreciation:15 },
+  { id:"elev-csg1520", group:"Elevación de calentador", name:"Elevación CSG15 / CSG20", roof:true, materials:[["Angular 2 pulg.",2,140,"unidad"],["Angular 1 1/2 pulg.",3,90,"unidad"],["Angular 1 pulg. exacto",3,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",1,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Solvente / thinner",0.5,60,"galón"],["Brocha",1,5,"unidad"]], labor:100, transport:50, depreciation:15 },
+  { id:"elev-csg2530", group:"Elevación de calentador", name:"Elevación CSG25 / CSG30", roof:true, materials:[["Angular 1 1/2 pulg. milimétrico",3,90,"unidad"],["Angular 2 pulg. exacto",3,140,"unidad"],["Angular 1 pulg. milimétrico",5,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",2,20.5,"libra"],["Brocha",2,10,"unidad"],["Pintura anticorrosiva",0.25,130,"galón"],["Solvente / thinner",0.5,60,"galón"]], labor:150, transport:50, depreciation:15 },
+  { id:"elev-csg36", group:"Elevación de calentador", name:"Elevación CSG36", roof:true, materials:[["Angular 1 1/2 pulg. milimétrico",5,90,"unidad"],["Angular 2 pulg. exacto",4,100,"unidad"],["Angular 1 pulg. milimétrico",7,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",2,20.5,"libra"],["Brocha",2,10,"unidad"],["Pintura anticorrosiva",0.25,130,"galón"],["Solvente / thinner",0.5,60,"galón"]], labor:150, transport:50, depreciation:15 },
+  { id:"tank-450", group:"Elevación de depósito", name:"Depósito de agua 450 litros", materials:[["Angular 2 pulg. exacto",3,140,"unidad"],["Angular 1 1/2 pulg. milimétrico",1,90,"unidad"],["Angular 1 pulg. milimétrico",3,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",1,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Brocha",1,5,"unidad"],["Solvente / thinner",0.5,60,"galón"]], labor:150, transport:50, depreciation:15 },
+  { id:"tank-750", group:"Elevación de depósito", name:"Depósito de agua 750 litros", materials:[["Angular 2 pulg. exacto",4,140,"unidad"],["Angular 1 1/2 pulg. milimétrico",1,90,"unidad"],["Angular 1 pulg. milimétrico",4,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",2,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Brocha",1,5,"unidad"],["Solvente / thinner",0.5,60,"galón"]], labor:200, transport:50, depreciation:15 },
+  { id:"tank-1100", group:"Elevación de depósito", name:"Depósito de agua 1100 litros", materials:[["Angular 2 pulg. exacto",4,140,"unidad"],["Angular 1 1/2 pulg. milimétrico",1,90,"unidad"],["Angular 1 pulg. milimétrico",4,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",2,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Brocha",1,5,"unidad"],["Solvente / thinner",0.5,60,"galón"]], labor:200, transport:50, depreciation:15 },
+  { id:"tank-1700", group:"Elevación de depósito", name:"Depósito de agua 1700 litros", materials:[["Tubo cuadrado 3×3 chapa 16",6,275,"unidad"],["Angular 1 pulg. milimétrico",6,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",3,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Brocha",2,5,"unidad"],["Solvente / thinner",0.5,60,"galón"]], labor:200, transport:50, depreciation:15 },
+  { id:"tank-2500", group:"Elevación de depósito", name:"Depósito de agua 2500 litros", materials:[["Tubo cuadrado 3×3 chapa 16",6,275,"unidad"],["Angular 1 pulg. milimétrico",6,60,"unidad"],["Electrodo Lincoln 6013 3/32 pulg.",3,20.5,"libra"],["Pintura anticorrosiva",0.25,130,"galón"],["Brocha",2,5,"unidad"],["Solvente / thinner",0.5,60,"galón"]], labor:200, transport:50, depreciation:15 },
+];
+
+const structureRows = template => template.materials.map((item, index) => ({ id:`${template.id}-${index}`, name:item[0], quantity:String(item[1]), unitPrice:String(item[2]), unit:item[3] }));
+
+function StructureCalculator() {
+  const draftKey = "casasolar:calculadora-estructuras";
+  const saved = readDraft(draftKey, {});
+  const initialTemplate = STRUCTURE_TEMPLATES.find(item => item.id === saved.templateId) || STRUCTURE_TEMPLATES[0];
+  const [templateId, setTemplateId] = useState(initialTemplate.id);
+  const [roof, setRoof] = useState(saved.roof || "Lámina galvanizada");
+  const [materials, setMaterials] = useState(Array.isArray(saved.materials) && saved.templateId === initialTemplate.id ? saved.materials : structureRows(initialTemplate));
+  const [labor, setLabor] = useState(saved.templateId === initialTemplate.id ? String(saved.labor ?? initialTemplate.labor) : String(initialTemplate.labor));
+  const [transport, setTransport] = useState(saved.templateId === initialTemplate.id ? String(saved.transport ?? initialTemplate.transport) : String(initialTemplate.transport));
+  const [depreciation, setDepreciation] = useState(saved.templateId === initialTemplate.id ? String(saved.depreciation ?? initialTemplate.depreciation) : String(initialTemplate.depreciation));
+  const [vatRate, setVatRate] = useState(String(saved.vatRate ?? 12));
+  const [commissionRate, setCommissionRate] = useState(String(saved.commissionRate ?? 5));
+  const [profitRate, setProfitRate] = useState(String(saved.profitRate ?? 5));
+  const template = STRUCTURE_TEMPLATES.find(item => item.id === templateId) || STRUCTURE_TEMPLATES[0];
+  const materialTotal = materials.reduce((sum, item) => sum + Math.max(0, Number(item.quantity)||0) * Math.max(0, Number(item.unitPrice)||0), 0);
+  const directCost = materialTotal + Math.max(0, Number(labor)||0) + Math.max(0, Number(transport)||0) + Math.max(0, Number(depreciation)||0);
+  const vat = directCost * Math.max(0, Number(vatRate)||0) / 100;
+  const commission = directCost * Math.max(0, Number(commissionRate)||0) / 100;
+  const profit = (directCost + vat) * Math.max(0, Number(profitRate)||0) / 100;
+  const salePrice = directCost + vat + commission + profit;
+  useEffect(() => saveDraft(draftKey, { templateId, roof, materials, labor, transport, depreciation, vatRate, commissionRate, profitRate }), [templateId, roof, materials, labor, transport, depreciation, vatRate, commissionRate, profitRate]);
+  const chooseTemplate = id => { const next=STRUCTURE_TEMPLATES.find(item=>item.id===id); setTemplateId(id); setMaterials(structureRows(next)); setLabor(String(next.labor)); setTransport(String(next.transport)); setDepreciation(String(next.depreciation)); };
+  const updateMaterial = (id,key,value) => setMaterials(rows => rows.map(row => row.id===id ? {...row,[key]:value}:row));
+  const addMaterial = () => setMaterials(rows => [...rows,{id:uid(),name:"Material adicional",quantity:"1",unitPrice:"0",unit:"unidad"}]);
+  return <div>
+    <div className="page-head row"><div><h2>Calculadora de estructuras</h2><p>Selecciona una estructura, confirma los materiales y calcula el precio sugerido de venta.</p></div><button className="btn-ghost" onClick={()=>chooseTemplate(templateId)}>Restablecer este modelo</button></div>
+    <div className="structure-guide"><strong>1. Elige el modelo</strong><span>2. Revisa cantidades y precios</span><span>3. Confirma costos y precio de venta</span></div>
+    <div className="cost-calculator-layout">
+      <div className="section-card">
+        <div className="section-title"><Wrench size={20}/><div><h3>Tipo de estructura</h3><p>Las cantidades iniciales provienen de tus hojas de materiales.</p></div></div>
+        <label><span className="field-label">Estructura y capacidad</span><select className="input" value={templateId} onChange={e=>chooseTemplate(e.target.value)}>{[...new Set(STRUCTURE_TEMPLATES.map(item=>item.group))].map(group=><optgroup key={group} label={group}>{STRUCTURE_TEMPLATES.filter(item=>item.group===group).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>)}</select></label>
+        {template.roof && <label><span className="field-label">Tipo de techo</span><select className="input" value={roof} onChange={e=>setRoof(e.target.value)}><option>Lámina galvanizada</option><option>Terraza</option><option>Teja sobre terraza</option><option>Teja tradicional</option><option>Otro / pendiente de visita</option></select></label>}
+        <h3>Materiales requeridos</h3>
+        <div className="structure-materials"><div className="structure-material-head"><span>Material</span><span>Cantidad</span><span>Precio unitario</span><span>Subtotal</span><span></span></div>{materials.map(item=><div className="structure-material-row" key={item.id}><input className="input" value={item.name} onChange={e=>updateMaterial(item.id,"name",e.target.value)}/><label><input className="input" type="number" min="0" step="0.125" value={item.quantity} onChange={e=>updateMaterial(item.id,"quantity",e.target.value)}/><small>{item.unit}</small></label><input className="input" type="number" min="0" step="0.01" value={item.unitPrice} onChange={e=>updateMaterial(item.id,"unitPrice",e.target.value)}/><strong>{fmtMoney((Number(item.quantity)||0)*(Number(item.unitPrice)||0))}</strong><button className="icon-btn" onClick={()=>setMaterials(rows=>rows.filter(row=>row.id!==item.id))} aria-label="Quitar material"><Trash2 size={15}/></button></div>)}</div>
+        <button className="btn-ghost" onClick={addMaterial}><Plus size={15}/> Agregar material</button>
+      </div>
+      <div className="section-card cost-result-card">
+        <div className="cost-result-title"><CircleDollarSign size={24}/><div><span>Cálculo seleccionado</span><h3>{template.name}</h3></div></div>
+        <div className="structure-cost-inputs"><label><span>Mano de obra</span><input className="input" type="number" min="0" value={labor} onChange={e=>setLabor(e.target.value)}/></label><label><span>Transporte</span><input className="input" type="number" min="0" value={transport} onChange={e=>setTransport(e.target.value)}/></label><label><span>Herramienta / maquinaria</span><input className="input" type="number" min="0" value={depreciation} onChange={e=>setDepreciation(e.target.value)}/></label></div>
+        <div className="cost-summary-row"><span>Materiales</span><strong>{fmtMoney(materialTotal)}</strong></div><div className="cost-summary-row"><span>Costo directo total</span><strong>{fmtMoney(directCost)}</strong></div>
+        <div className="structure-percentages"><label><span>IVA</span><span><input className="input" type="number" min="0" value={vatRate} onChange={e=>setVatRate(e.target.value)}/>%</span></label><label><span>Comisión</span><span><input className="input" type="number" min="0" value={commissionRate} onChange={e=>setCommissionRate(e.target.value)}/>%</span></label><label><span>Utilidad</span><span><input className="input" type="number" min="0" value={profitRate} onChange={e=>setProfitRate(e.target.value)}/>%</span></label></div>
+        <div className="cost-summary-row"><span>IVA</span><strong>{fmtMoney(vat)}</strong></div><div className="cost-summary-row"><span>Comisión</span><strong>{fmtMoney(commission)}</strong></div><div className="cost-summary-row"><span>Utilidad</span><strong>{fmtMoney(profit)}</strong></div>
+        <div className="cost-grand-total"><span>Precio sugerido de venta</span><strong>{fmtMoney(salePrice)}</strong></div>
+        <p className="structure-warning"><ShieldCheck size={16}/> Estimación comercial. Antes de fabricar o instalar, un técnico responsable debe validar medidas, cargas, anclajes, soldadura y condiciones del techo.</p><small>El borrador se guarda automáticamente en este dispositivo.</small>
+      </div>
+    </div>
+  </div>;
+}
+
 function HeaterCostCalculator() {
   const draftKey = "casasolar:calculadora-costos";
   const saved = readDraft(draftKey, {});
@@ -601,7 +674,9 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
     nombre: "", telefono: "", email: "", canal: "Llamada entrante",
     dpi: "", nit: "", direccion: "", departamento: "",
     productoInteres: CATALOGO[0].id, estado: "Nuevo",
-    vendedor: hasRole(currentUser, "Vendedor") && !hasRole(currentUser, "Jefe") ? currentUser.nombre : (vendedores[0]?.nombre || currentUser.nombre),
+    vendedor: currentUser.nombre,
+    propietarioEmail: currentUser.email || "",
+    esReferido: "No", referidoPor: "",
     permisoPromociones: "Pendiente de confirmar", notas: "", fecha: todayISO(),
   };
   const [form, setForm] = useState(() => readDraft(draftKey, defaultForm));
@@ -609,6 +684,10 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
   const saveContact = async () => {
+    if (form.esReferido === "Sí" && !String(form.referidoPor || "").trim()) {
+      window.alert("Escribe el nombre del proveedor o persona que está refiriendo al cliente.");
+      return;
+    }
     try { setSaving(true); await onSave(form); clearDraft(draftKey); }
     catch (error) { console.error("No se pudo guardar el contacto:", error); }
     finally { setSaving(false); }
@@ -679,10 +758,24 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
             </div>
             <div>
               <label className="field-label">Vendedor asignado</label>
-              <select className="input" disabled={currentUser.rol !== "Jefe"} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
-                {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+              <select className="input" disabled={!isContactBoss(currentUser)} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
+                <option value={currentUser.nombre}>{isContactBoss(currentUser) ? `Base del jefe · ${currentUser.nombre}` : currentUser.nombre}</option>
+                {vendedores.filter(v => v.nombre !== currentUser.nombre).map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
               </select>
             </div>
+          </div>
+          <div className="row-2">
+            <div>
+              <label className="field-label">¿Es cliente referido?</label>
+              <select className="input" value={form.esReferido || "No"} onChange={e => setForm(prev => ({ ...prev, esReferido: e.target.value, ...(e.target.value === "No" ? { referidoPor: "" } : {}) }))}>
+                <option>No</option>
+                <option>Sí</option>
+              </select>
+            </div>
+            {form.esReferido === "Sí" && <div>
+              <label className="field-label">Nombre del proveedor que refiere</label>
+              <input className="input" value={form.referidoPor || ""} onChange={e => set("referidoPor", e.target.value)} placeholder="Nombre de la persona o proveedor" />
+            </div>}
           </div>
           <label className="field-label">Permiso para recibir promociones</label>
           <select className="input" value={form.permisoPromociones || "Pendiente de confirmar"} onChange={e => set("permisoPromociones", e.target.value)}>
@@ -695,7 +788,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cerrar</button>
-          <button className="btn-primary" disabled={!form.nombre.trim() || saving} onClick={saveContact}>{saving ? "Guardando…" : "Guardar contacto"}</button>
+          <button className="btn-primary" disabled={!form.nombre.trim() || (form.esReferido === "Sí" && !String(form.referidoPor || "").trim()) || saving} onClick={saveContact}>{saving ? "Guardando…" : "Guardar contacto"}</button>
         </div>
       </div>
     </div>
@@ -1325,17 +1418,18 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
 }
 
 function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onAssign, onOpen }) {
+  const isBoss = isContactBoss(currentUser);
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
-  const [filterVendedor, setFilterVendedor] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
+  const [filterVendedor, setFilterVendedor] = useState(isBoss ? "todos" : currentUser.nombre);
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState([]);
-  const [assignTo, setAssignTo] = useState(vendedores[0]?.nombre || "");
+  const [assignTo, setAssignTo] = useState("");
 
   const visibles = useMemo(() => {
     return contactos.filter(c => {
-      if (currentUser.rol !== "Jefe" && c.vendedor !== currentUser.nombre) return false;
+      if (!canSeeContact(c, currentUser)) return false;
       if (filterVendedor !== "todos" && c.vendedor !== filterVendedor) return false;
       if (filterEstado !== "todos" && c.estado !== filterEstado) return false;
       if (search && !c.nombre.toLowerCase().includes(search.toLowerCase()) && !c.telefono.includes(search)) return false;
@@ -1365,7 +1459,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
           <option value="todos">Todos los estados</option>
           {ESTADOS_CONTACTO.map(e => <option key={e} value={e}>{e}</option>)}
         </select>
-        {currentUser.rol === "Jefe" && (
+        {isBoss && (
           <select className="input filter-select" value={filterVendedor} onChange={e => setFilterVendedor(e.target.value)}>
             <option value="todos">Todos los vendedores</option>
             {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
@@ -1373,14 +1467,16 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         )}
       </div>
 
-      {currentUser.rol === "Jefe" && (
+      {isBoss && (
         <div className="bulk-bar">
           <label><input type="checkbox" checked={visibles.length > 0 && visibles.every(c => selected.includes(c.id))} onChange={e => setSelected(e.target.checked ? visibles.map(c => c.id) : [])} /> Seleccionar los {visibles.length} visibles</label>
           <span>{selected.length} seleccionados</span>
           <select className="input compact" value={assignTo} onChange={e => setAssignTo(e.target.value)}>
-            {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+            <option value="">Seleccionar vendedor</option>
+            <option value={currentUser.nombre}>Asignar a {currentUser.nombre}</option>
+            {vendedores.filter(v => v.nombre !== currentUser.nombre && (hasRole(v, "Vendedor") || v.rol === "Jefe técnico")).map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
           </select>
-          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={() => { onAssign(selected, assignTo); setSelected([]); }}><Users2 size={14} /> Asignar vendedor</button>
+          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={async () => { await onAssign(selected, assignTo); setSelected([]); setAssignTo(""); }}><Users2 size={14} /> Asignar contactos seleccionados</button>
         </div>
       )}
 
@@ -1392,11 +1488,11 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
             const Icon = canalIcon(c.canal);
             return (
               <div key={c.id} className="contact-row" onClick={() => onOpen(c.id)}>
-                {currentUser.rol === "Jefe" && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
+                {isBoss && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
                 <div className="channel-icon"><Icon size={16} /></div>
                 <div className="contact-main">
                   <div className="contact-name">{c.nombre}</div>
-                  <div className="contact-sub">{productoNombre(c.productoInteres)} · {c.vendedor}</div>
+                  <div className="contact-sub">{productoNombre(c.productoInteres)} · Asignado a: {c.vendedor}</div>
                 </div>
                 <div className="contact-date muted">{fmtDate(c.fecha)}</div>
                 <Badge estado={c.estado} />
@@ -1411,7 +1507,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         <ContactModal vendedores={vendedores} currentUser={currentUser} onClose={() => setShowModal(false)}
           onSave={async (form) => { await onAdd(form); setShowModal(false); }} />
       )}
-      {showImport && <ExcelImportModal contactos={currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
+      {showImport && <ExcelImportModal contactos={isBoss ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
     </div>
   );
 }
@@ -1448,6 +1544,7 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
         <span><strong>Interés:</strong> {productoNombre(contacto.productoInteres)}</span>
         <span><strong>Vendedor:</strong> {contacto.vendedor}</span>
         <span><strong>Registrado:</strong> {fmtDate(contacto.fecha)}</span>
+        <span><strong>Referido:</strong> {contacto.esReferido === "Sí" ? `Sí · ${contacto.referidoPor || "Sin nombre registrado"}` : "No"}</span>
         <span><strong>Promociones:</strong> {contacto.permisoPromociones || "Pendiente de confirmar"}</span>
       </div>
       {contacto.notas && <div className="section-card"><h3>Notas</h3><p>{contacto.notas}</p></div>}
@@ -2185,7 +2282,7 @@ export default function CasaSolarCRM() {
   };
 
   const addContacto = async (form) => {
-    const record = { ...form, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
+    const record = { ...form, vendedor: currentUser.nombre, propietarioEmail: currentUser.email || "", id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
     setContactos(current => [record, ...current]);
     try { setContactos(await upsertSharedDataRecords("casasolar:contactos", record)); }
     catch (error) { setContactos(current => current.filter(item => item.id !== record.id)); window.alert("No se pudo guardar el contacto en Firebase. Revisa la conexión e inténtalo nuevamente."); throw error; }
@@ -2198,11 +2295,12 @@ export default function CasaSolarCRM() {
     const changedRecords = [];
     rows.forEach(row => {
       const index = next.findIndex(item => (phone(row.telefono) && phone(item.telefono) === phone(row.telefono)) || name(item.nombre) === name(row.nombre));
-      if (index < 0) { const record = { ...row, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
-      const canUpdate = currentUser.rol === "Jefe" || next[index].vendedor === currentUser.nombre;
+      if (index < 0) { const record = { ...row, vendedor: currentUser.nombre, propietarioEmail: currentUser.email || "", id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
+      const canUpdate = isContactBoss(currentUser) || next[index].vendedor === currentUser.nombre;
       if (!canUpdate) { skipped += 1; return; }
       if (mode === "update") {
-        const available = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== "" && value != null));
+        const protectedFields = new Set(["id", "vendedor", "privadoLeyla", "creadoPorEmail", "creadoEn", "asignadoPor", "asignadoPorEmail", "asignadoEn", "duplicate"]);
+        const available = Object.fromEntries(Object.entries(row).filter(([key, value]) => !protectedFields.has(key) && value !== "" && value != null));
         next[index] = { ...next[index], ...available, id: next[index].id };
         changedRecords.push(next[index]);
         updated += 1;
@@ -2242,8 +2340,10 @@ export default function CasaSolarCRM() {
     }
   };
   const assignContactos = async (ids, seller) => {
+    if (!isContactBoss(currentUser)) return window.alert("Solo un usuario con rol Jefe puede asignar o reasignar contactos.");
     const selectedIds = new Set(ids);
-    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, vendedor: seller }));
+    const assignment = { vendedor: seller, asignadoPor: currentUser.nombre, asignadoPorEmail: currentUser.email || "", asignadoEn: new Date().toISOString() };
+    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, ...assignment }));
     const quoteChanges = cotizaciones.filter(item => selectedIds.has(item.contactoId)).map(item => ({ ...item, vendedor: seller }));
     if (contactChanges.length) setContactos(await upsertSharedDataRecords("casasolar:contactos", contactChanges));
     if (quoteChanges.length) setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", quoteChanges));
@@ -2478,7 +2578,8 @@ export default function CasaSolarCRM() {
               <Dashboard contactos={contactos} cotizaciones={cotizaciones} seguimientos={seguimientos} currentUser={currentUser} vendedores={vendedores} />
             )}
             {tab === "calculadora" && <RouteCalculator cotizaciones={cotizaciones} currentUser={currentUser} onUpdateCotizacion={updateCotizacion} />}
-            {tab === "calculadora-costos" && <HeaterCostCalculator />}
+            {tab === "calculadora-costos" && hasRole(currentUser, "Jefe") && <HeaterCostCalculator />}
+            {tab === "calculadora-estructuras" && canUseStructureCalculator(currentUser) && <StructureCalculator />}
             {tab === "contactos" && !selectedContact && (
               <ContactosView contactos={contactos} vendedores={vendedores} currentUser={currentUser}
                 onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onOpen={setSelectedId} />
@@ -2784,6 +2885,21 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 /* Calculadora de rutas */
 .cost-calculator-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(300px,.9fr); gap:18px; align-items:start; min-width:0; }
 .cost-calculator-layout > * { min-width:0; }
+.structure-guide { display:flex; gap:10px; margin:0 0 16px; flex-wrap:wrap; }
+.structure-guide > * { flex:1 1 180px; padding:11px 14px; border-radius:10px; background:#fff; border:1px solid var(--border); color:var(--muted); }
+.structure-guide strong { color:var(--red); }
+.structure-materials { margin:10px 0 14px; overflow-x:auto; }
+.structure-material-head,.structure-material-row { display:grid; grid-template-columns:minmax(190px,2fr) minmax(90px,.7fr) minmax(110px,.8fr) minmax(100px,.8fr) 34px; gap:8px; align-items:center; min-width:650px; padding:7px 4px; }
+.structure-material-head { font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--border); }
+.structure-material-row { border-bottom:1px solid var(--border); }
+.structure-material-row label small { display:block; margin:2px 0 0 5px; color:var(--muted); }
+.structure-material-row strong { text-align:right; }
+.structure-cost-inputs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:14px; }
+.structure-cost-inputs label>span,.structure-percentages label>span:first-child { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }
+.structure-percentages { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:16px 0; }
+.structure-percentages label>span:last-child { display:flex; align-items:center; gap:4px; }
+.structure-warning { display:flex; gap:8px; padding:11px; border-radius:9px; background:#fff8e8; color:#755100; font-size:12px; line-height:1.45; }
+.structure-warning svg { flex:0 0 auto; margin-top:1px; }
 .cost-parts-editor { display:flex; flex-direction:column; gap:8px; margin:10px 0 14px; }
 .cost-part-input { display:grid; grid-template-columns:minmax(120px,1fr) 110px 120px; gap:8px; align-items:center; }
 .cost-part-input .input { margin:0; }
@@ -2867,6 +2983,8 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 }
 
 @media (max-width: 720px) {
+  .structure-cost-inputs, .structure-percentages { grid-template-columns:1fr; }
+  .structure-guide { display:grid; grid-template-columns:1fr; }
   .app-root { min-height:100dvh; width:100%; border-radius:0; overflow:visible; }
   .app-shell { flex-direction:column; min-height:100dvh; min-width:0; }
   .sidebar { width:100%; display:block; padding:7px 6px; position:sticky; top:0; z-index:40; overflow:hidden; box-shadow:0 3px 12px rgba(0,0,0,.18); }
