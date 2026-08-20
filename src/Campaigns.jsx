@@ -23,6 +23,8 @@ const normalize = value => clean(value).normalize("NFD").replace(/[\u0300-\u036f
 const phoneDigits = value => clean(value).replace(/\D/g, "").replace(/^502/, "");
 const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, "0")).join("");
 const PROMOTION_BASE_URL = "https://crm-casa-solar.web.app";
+const isContactBoss = user => user?.rol === "Jefe" || (Array.isArray(user?.roles) && user.roles.includes("Jefe"));
+const canSeeContact = (contact, user) => isContactBoss(user) || contact?.vendedor === user?.nombre;
 const promotionUrl = token => `${PROMOTION_BASE_URL}/p/${token}`;
 const valueBy = (row, names) => {
   const entry = Object.entries(row).find(([key]) => names.includes(normalize(key)));
@@ -47,6 +49,8 @@ const IMPORT_ALIASES = {
   promocion: ["promocion", "promotion", "discount", "descuento", "offer", "oferta"],
   formaPago: ["formadepago", "metododepago", "paymentmethod", "paymenttype", "payment", "pago"],
   vendedor: ["vendedor", "asesor", "ejecutivo", "salesperson", "salesrep", "seller", "owner"],
+  referido: ["referido", "esreferido", "clientereferido", "referral", "referred", "isreferral"],
+  referidoPor: ["referidopor", "referidoporproveedor", "proveedorquerefiere", "nombreproveedor", "referente", "referrer", "referredby", "referralname"],
   estado: ["estadocliente", "estado", "status", "customerstatus", "stage"],
   canal: ["canal", "origen", "fuente", "channel", "source", "leadsource"],
   sitioWeb: ["sitioweb", "paginaweb", "website", "web", "url"],
@@ -74,16 +78,22 @@ export function ExcelImportModal({ contactos, currentUser, onImport, onClose }) 
         const promocion = importValue(row, "promocion");
         const pago = importValue(row, "formaPago");
         const observaciones = importValue(row, "observaciones");
-        const vendedorArchivo = importValue(row, "vendedor");
         const estadoArchivo = importValue(row, "estado");
         const canalArchivo = importValue(row, "canal");
+        const referidoArchivo = importValue(row, "referido");
+        const referidoPor = importValue(row, "referidoPor");
+        const esReferido = referidoPor || ["si", "yes", "true", "1"].includes(normalize(referidoArchivo)) ? "Sí" : "No";
         return {
           nombre, telefono: phoneDigits(importValue(row, "telefono")), email: importValue(row, "email"),
           dpi: importValue(row, "dpi"), nit: importValue(row, "nit"), sitioWeb: importValue(row, "sitioWeb"),
           direccion: [fisica, aldea, municipio].filter(Boolean).join(", "), departamento,
           municipio, productoComprado: producto, precioCompra: precio, promocionCompra: promocion, formaPagoCompra: pago,
           productoInteres: "calentadores", canal: canalArchivo || "Base histórica", estado: estadoArchivo || "Cliente anterior",
-          vendedor: currentUser.rol === "Jefe" && vendedorArchivo ? vendedorArchivo : currentUser.nombre,
+          // La base siempre entra al usuario que la sube. Los usuarios Jefe
+          // pueden asignarla posteriormente desde Contactos; una columna del
+          // Excel nunca cambia la propiedad de manera automática.
+          vendedor: currentUser.nombre,
+          esReferido, referidoPor: esReferido === "Sí" ? referidoPor : "",
           permisoPromociones: "Pendiente de confirmar", fecha: new Date().toISOString().slice(0, 10),
           notas: [observaciones, producto && `Producto anterior: ${producto}`, precio && `Precio: ${precio}`, promocion && `Promoción: ${promocion}`, pago && `Forma de pago: ${pago}`].filter(Boolean).join(" · "),
         };
@@ -144,11 +154,11 @@ function CampaignModal({ currentUser, onSave, onClose }) {
 }
 
 function SendCampaignModal({ campaign, contactos, currentUser, onPrepared, onMarkSent, onClose }) {
-  const eligible = contactos.filter(c => c.permisoPromociones === "Acepta promociones");
   const [selected, setSelected] = useState([]);
   const [channel, setChannel] = useState("WhatsApp");
   const [queue, setQueue] = useState([]);
   const [busy, setBusy] = useState(false);
+  const eligible = contactos.filter(contact => contact.permisoPromociones !== "No contactar" && (channel === "WhatsApp" ? Boolean(phoneDigits(contact.telefono)) : Boolean(clean(contact.email))));
   const toggle = id => setSelected(ids => ids.includes(id) ? ids.filter(item => item !== id) : ids.length < 10 ? [...ids, id] : ids);
   const prepare = async () => {
     const chosen = eligible.filter(c => selected.includes(c.id));
@@ -162,7 +172,7 @@ function SendCampaignModal({ campaign, contactos, currentUser, onPrepared, onMar
         const preparedAt = new Date().toISOString();
         await createCampaignLink(token, { campaignId: campaign.id, contactId: contact.id, seller: currentUser.nombre, sellerPhone: currentUser.telefono || "", createdAt: preparedAt });
         const advisorPhone = currentUser.telefono ? `\nWhatsApp del asesor: ${currentUser.telefono}` : "";
-        const text = `☀️ ¡Hola, ${contact.nombre}!\n\nEn Casa Solar valoramos mucho su confianza. Por eso queremos ofrecerle un beneficio exclusivo, preparado especialmente para nuestros clientes.\n\nConozca cómo puede disfrutar el confort y ahorro que ofrece la energía solar. ♻️🏠\n\n👉 Acceda a su promoción aquí:\n${promotionUrl(token)}\n\nSu asesor: ${currentUser.nombre}${advisorPhone}\n\n*${campaign.condiciones || "Promoción sujeta a condiciones y disponibilidad."}*`;
+        const text = `☀️ ¡Hola, ${contact.nombre}!\n\nEn Casa Solar valoramos mucho su confianza. Por eso queremos ofrecerle un beneficio exclusivo, preparado especialmente para nuestros clientes.\n\nConozca cómo puede disfrutar el confort y ahorro que ofrece la energía solar. ♻️🏠\n\n👉 Acceda a su promoción aquí:\n${promotionUrl(token)}\n\nSu asesor: ${currentUser.nombre}${advisorPhone}\n\n*${campaign.condiciones || "Promoción sujeta a condiciones y disponibilidad."}*\n\nSi prefiere no recibir más promociones, puede indicárnoslo respondiendo a este mensaje.`;
         const record = { id: token, token, contactoId: contact.id, contactoNombre: contact.nombre, vendedor: currentUser.nombre, vendedorTelefono: currentUser.telefono || "", canal: channel, preparedAt, sentAt: null };
         return { ...record, phone: phoneDigits(contact.telefono), email: contact.email || "", text };
       }));
@@ -176,7 +186,7 @@ function SendCampaignModal({ campaign, contactos, currentUser, onPrepared, onMar
     setQueue(items => items.map(row => row.token === item.token ? { ...row, sentAt: new Date().toISOString() } : row));
     onMarkSent(item.token);
   };
-  return <div className="modal-overlay" onClick={onClose}><div className="modal modal-wide" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><h3>Enviar campaña</h3><small>Selecciona hasta 10 clientes con autorización.</small></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div><div className="modal-body">{queue.length ? <><div className="privacy-note">Los enlaces están preparados. Presiona cada botón por separado para que WhatsApp no bloquee las ventanas y puedas verificar el destinatario.</div><div className="send-queue">{queue.map(item=><div className="queue-row" key={item.token}><span><strong>{item.contactoNombre}</strong><small>{item.sentAt ? "Abierto para enviar" : "Pendiente"}</small></span><button className={item.sentAt ? "btn-ghost" : "btn-primary"} onClick={()=>deliver(item)}><MessageCircle size={15}/>{item.sentAt ? "Abrir nuevamente" : "Enviar"}</button></div>)}</div></> : <><label className="field-label">Canal</label><select className="input" value={channel} onChange={e=>setChannel(e.target.value)}><option>WhatsApp</option><option>Correo</option></select><div className="selection-head"><strong>{selected.length} de 10 seleccionados</strong><button className="btn-ghost small" onClick={()=>setSelected(eligible.slice(0,10).map(c=>c.id))}>Seleccionar primeros 10</button></div>{eligible.length ? <div className="contact-selector">{eligible.map(c=><label key={c.id} className={selected.includes(c.id)?"selected":""}><input type="checkbox" checked={selected.includes(c.id)} onChange={()=>toggle(c.id)} disabled={!selected.includes(c.id)&&selected.length>=10}/><span><strong>{c.nombre}</strong><small>{c.telefono || c.email || "Sin datos de contacto"}</small></span></label>)}</div>:<div className="alert-error">No hay clientes marcados como “Acepta promociones”. Actualiza primero el permiso desde Contactos.</div>}<div className="privacy-note">Cada cliente recibirá un enlace privado diferente bajo crm-casa-solar.web.app.</div></>}</div><div className="modal-foot"><button className="btn-ghost" onClick={onClose}>{queue.length?"Terminar":"Cancelar"}</button>{!queue.length&&<button className="btn-primary" disabled={busy||!selected.length} onClick={prepare}><Send size={16}/>{busy?"Preparando…":`Preparar ${selected.length} envío${selected.length===1?"":"s"}`}</button>}</div></div></div>;
+  return <div className="modal-overlay" onClick={onClose}><div className="modal modal-wide" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><h3>Enviar campaña</h3><small>Selecciona hasta 10 contactos por lote. El canal por el que ingresaron no limita el envío.</small></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div><div className="modal-body">{queue.length ? <><div className="privacy-note">Los enlaces están preparados. Presiona cada botón por separado para revisar al destinatario y enviar manualmente desde WhatsApp.</div><div className="send-queue">{queue.map(item=><div className="queue-row" key={item.token}><span><strong>{item.contactoNombre}</strong><small>{item.sentAt ? "Abierto para enviar" : "Pendiente"}</small></span><button className={item.sentAt ? "btn-ghost" : "btn-primary"} onClick={()=>deliver(item)}><MessageCircle size={15}/>{item.sentAt ? "Abrir nuevamente" : "Enviar"}</button></div>)}</div></> : <><label className="field-label">Canal para enviar la campaña</label><select className="input" value={channel} onChange={e=>{setChannel(e.target.value);setSelected([]);}}><option>WhatsApp</option><option>Correo</option></select><div className="privacy-note">{channel === "WhatsApp" ? `${eligible.length} contactos tienen número telefónico disponible. Incluye clientes anteriores, contactos nuevos, referidos y llamadas entrantes.` : `${eligible.length} contactos tienen correo electrónico disponible.`}</div><div className="selection-head"><strong>{selected.length} de 10 seleccionados</strong><button className="btn-ghost small" onClick={()=>setSelected(eligible.slice(0,10).map(c=>c.id))}>Seleccionar primeros 10</button></div>{eligible.length ? <div className="contact-selector">{eligible.map(c=><label key={c.id} className={selected.includes(c.id)?"selected":""}><input type="checkbox" checked={selected.includes(c.id)} onChange={()=>toggle(c.id)} disabled={!selected.includes(c.id)&&selected.length>=10}/><span><strong>{c.nombre}</strong><small>{channel === "WhatsApp" ? c.telefono : c.email}{c.canal ? ` · Origen: ${c.canal}` : ""}</small></span></label>)}</div>:<div className="alert-error">No hay contactos con {channel === "WhatsApp" ? "número telefónico" : "correo electrónico"} disponible.</div>}<div className="privacy-note">Cada contacto recibirá un enlace individual. Evita enviar mensajes repetidos y respeta a quien solicite no recibir más promociones.</div></>}</div><div className="modal-foot"><button className="btn-ghost" onClick={onClose}>{queue.length?"Terminar":"Cancelar"}</button>{!queue.length&&<button className="btn-primary" disabled={busy||!selected.length} onClick={prepare}><Send size={16}/>{busy?"Preparando…":`Preparar ${selected.length} envío${selected.length===1?"":"s"}`}</button>}</div></div></div>;
 }
 
 export function CampaignsView({ campaigns, contactos, currentUser, onChange }) {
@@ -188,7 +198,7 @@ export function CampaignsView({ campaigns, contactos, currentUser, onChange }) {
     setStates(Object.fromEntries(linkEntries)); setPublicData(Object.fromEntries(campaignEntries));
   };
   useEffect(() => { refresh(); }, [campaigns.length]);
-  const allowedContacts = currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre);
+  const allowedContacts = contactos.filter(contact => canSeeContact(contact, currentUser));
   const updateCampaign = updated => onChange(campaigns.map(c => c.id === updated.id ? updated : c));
   return <div><div className="page-head row"><div><h2>Campañas</h2><p>Fidelización, promociones y seguimiento de beneficios.</p></div><button className="btn-primary" onClick={()=>setShowCreate(true)}><Plus size={16}/> Nueva campaña</button></div>
     <div className="campaign-grid">{campaigns.map(c => { const data=publicData[c.id] || c; const sent=(c.sends||[]).filter(s=>s.sentAt).length; const opened=(c.sends||[]).filter(s=>states[s.token]?.accessedAt).length; const requested=(c.sends||[]).filter(s=>states[s.token]?.benefitRequestedAt).length; return <div className="campaign-card" key={c.id}>{(data.imageData||data.imageUrl) && <img src={data.imageData||data.imageUrl}/>}<div className="campaign-content"><h3>{c.nombre}</h3><p>{c.beneficio}</p><div className="campaign-kpis"><span><strong>{sent}</strong> enviados</span><span><strong>{opened}</strong> accesos</span><span><strong>{requested}</strong> solicitudes</span></div><div className="row"><button className="btn-primary" onClick={()=>setSending(c)}><MessageCircle size={15}/> Enviar</button><button className="btn-ghost" onClick={refresh}><RefreshCw size={14}/> Actualizar</button></div></div>{(c.sends?.length||0)>0 && <div className="campaign-log"><table className="table small"><thead><tr><th>Cliente</th><th>Vendedor</th><th>Envío</th><th>Acceso</th><th>Beneficio</th></tr></thead><tbody>{c.sends.map(s=>{const st=states[s.token]||{}; return <tr key={s.id}><td>{s.contactoNombre}</td><td>{s.vendedor}</td><td>{s.sentAt?new Date(s.sentAt).toLocaleDateString("es-GT"):"Preparado"}</td><td>{st.accessedAt?"Sí":"No"}</td><td>{st.usedBenefit?"Utilizado":st.benefitRequestedAt?<button className="btn-ghost small" onClick={async()=>{await markCampaignBenefitUsed(s.token,true);refresh();}}>Marcar utilizado</button>:"Sin solicitar"}</td></tr>})}</tbody></table></div>}</div>})}</div>
