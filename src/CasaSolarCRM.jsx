@@ -26,8 +26,12 @@ import {
   setSharedData,
   subscribeSharedData, subscribeCRMUserProfile, updateSharedDataRecords,
 } from "./firebase.js";
-import { downloadInstallationReportPdf, downloadOrderPdf, downloadQuotePdf } from "./documents.js";
 import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } from "./Campaigns.jsx";
+
+// Los generadores PDF son pesados; se cargan únicamente cuando alguien descarga un documento.
+const downloadQuotePdf = (...args) => import("./documents.js").then(module => module.downloadQuotePdf(...args));
+const downloadOrderPdf = (...args) => import("./documents.js").then(module => module.downloadOrderPdf(...args));
+const downloadInstallationReportPdf = (...args) => import("./documents.js").then(module => module.downloadInstallationReportPdf(...args));
 
 const DISCOUNT_AUTHORIZERS = {
   "ligiaeugeniamolina@gmail.com": "Ligia Eugenia Molina",
@@ -127,7 +131,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v63";
+const CRM_VERSION = "v64";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -173,6 +177,16 @@ const nombreItem = (item) => {
   const descripcion = String(item?.descripcion || "").trim();
   if (descripcion && descripcion.toLowerCase() !== "producto") return descripcion;
   return item?.productoNombre || item?.producto || item?.nombre || productoNombre(item?.productoId) || "Producto sin especificar";
+};
+const advisorProfile = (sellerName, currentUser, vendedores = []) => {
+  const sellerIdentity = normalizeIdentity(sellerName);
+  const email = normalizedEmail(currentUser?.email);
+  const matched = vendedores.find(item => normalizedEmail(item.email) === email)
+    || vendedores.find(item => normalizeIdentity(item.nombre) === sellerIdentity)
+    || vendedores.find(item => normalizeIdentity(item.nombre) === normalizeIdentity(currentUser?.nombre));
+  const rawName = matched?.nombre || currentUser?.nombre || sellerName || "Asesor de ventas";
+  const safeName = String(rawName).includes("@") ? (matched?.nombre || "Asesor de ventas") : rawName;
+  return { nombre: safeName, telefono: matched?.telefono || currentUser?.telefono || "" };
 };
 
 async function storageGet(key, shared) {
@@ -857,11 +871,12 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
   );
 }
 
-function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSave, onClose }) {
+function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, vendedores = [], initial, onSave, onClose }) {
   const itemEditorRef = useRef(null);
   const draftKey = `casasolar:draft:cotizacion:${initial?.id || initialContactId || "nueva"}`;
   const pendingTransportKey = `casasolar:transportePendiente:${vendedor}`;
   const savedDraft = useMemo(() => readDraft(draftKey, {}), [draftKey]);
+  const defaultAdvisor = useMemo(() => advisorProfile(vendedor, currentUser, vendedores), [vendedor, currentUser, vendedores]);
   const [contactoId, setContactoId] = useState(savedDraft.contactoId || initial?.contactoId || initialContactId || (contactos[0]?.id || ""));
   const [items, setItems] = useState(() => (savedDraft.items || initial?.items || []).map(item => ({ ...item, id: item.id || uid() })));
   const [prod, setProd] = useState(savedDraft.prod || CATALOGO[0].id);
@@ -877,6 +892,9 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
   const [estado, setEstado] = useState(savedDraft.estado || initial?.estado || "Pendiente");
   const [promocion, setPromocion] = useState(savedDraft.promocion ?? initial?.promocion ?? "");
   const [garantiaAnios, setGarantiaAnios] = useState(savedDraft.garantiaAnios ?? initial?.garantiaAnios ?? String(initial?.garantia || "").replace(/[^0-9]/g, ""));
+  const [telefonoCliente, setTelefonoCliente] = useState(savedDraft.telefonoCliente ?? initial?.telefonoCliente ?? initial?.cliente?.telefono ?? "");
+  const [asesorNombre, setAsesorNombre] = useState(savedDraft.asesorNombre ?? initial?.asesorNombre ?? initial?.vendedor ?? defaultAdvisor.nombre);
+  const [asesorTelefono, setAsesorTelefono] = useState(savedDraft.asesorTelefono ?? initial?.asesorTelefono ?? defaultAdvisor.telefono);
   const [editingItemId, setEditingItemId] = useState(savedDraft.editingItemId || null);
   const [itemMessage, setItemMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -886,14 +904,17 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precioUnitario, 0);
   useEffect(() => {
-    saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
-  }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
+    saveDraft(draftKey, { contactoId, items, notas, estado, promocion, garantiaAnios, telefonoCliente, asesorNombre, asesorTelefono, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId });
+  }, [draftKey, contactoId, items, notas, estado, promocion, garantiaAnios, telefonoCliente, asesorNombre, asesorTelefono, prod, categoria, descripcion, tamano, altura, compatibilidad, cant, precioLista, precio, editingItemId]);
+  useEffect(() => {
+    if (!initial && clienteSeleccionado) setTelefonoCliente(clienteSeleccionado.telefono || "");
+  }, [contactoId]);
   const quotePayload = nextItems => {
     const nextTotal = nextItems.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
-    const commercial = { promocion: promocion.trim(), garantiaAnios: Number(garantiaAnios) || "", garantia: garantiaAnios ? `${Number(garantiaAnios)} años` : "" };
+    const commercial = { promocion: promocion.trim(), garantiaAnios: Number(garantiaAnios) || "", garantia: garantiaAnios ? `${Number(garantiaAnios)} años` : "", telefonoCliente: telefonoCliente.trim(), asesorNombre: asesorNombre.trim() || defaultAdvisor.nombre, asesorTelefono: asesorTelefono.trim() };
     return initial
-      ? { ...initial, contactoId, items: nextItems, total: nextTotal, estado, notas, ...commercial }
-      : { contactoId, items: nextItems, total: nextTotal, estado, notas, ...commercial, vendedor, fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] };
+      ? { ...initial, contactoId, items: nextItems, total: nextTotal, estado, notas, ...commercial, vendedor: asesorNombre.trim() || defaultAdvisor.nombre, vendedorEmail: initial.vendedorEmail || currentUser?.email || "" }
+      : { contactoId, items: nextItems, total: nextTotal, estado, notas, ...commercial, vendedor: asesorNombre.trim() || defaultAdvisor.nombre, vendedorEmail: currentUser?.email || "", fecha: todayISO(), vigenciaDias: 30, ivaIncluido: true, envios: [] };
   };
   const saveQuote = async () => {
     try {
@@ -914,31 +935,18 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
     }
     const wasEditing = Boolean(editingItemId);
     const nextItem = {
-      id: uid(), productoId: prod, productoNombre: productoNombre(prod), categoria,
+      id: uid(), productoId: prod, productoNombre: productoNombre(prod), categoria: prod === "transporte_ruta" ? "Servicios" : categoria,
       descripcion: descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
       altura: altura.trim(), compatibilidad: compatibilidad.trim(),
-      cantidad: Number(cant) || 1, precioLista: Number(precioLista) || p, precioUnitario: p,
+      cantidad: Math.max(1, Number(cant) || 1), precioLista: precioLista === "" ? p : Math.max(0, Number(precioLista) || 0), precioUnitario: p,
     };
     const nextItems = editingItemId
       ? items.map(item => item.id === editingItemId ? { ...nextItem, id: editingItemId } : item)
       : [...items, nextItem];
     setItems(nextItems);
-    if (wasEditing && initial) {
-      try {
-        setSaving(true);
-        setItemMessage("Guardando el producto actualizado en Firebase…");
-        await onSave(quotePayload(nextItems));
-        clearDraft(draftKey);
-        return;
-      } catch (error) {
-        console.error("No se pudo guardar el producto editado:", error);
-        setItemMessage("No se pudo guardar en Firebase. El cambio permanece en pantalla; revisa la conexión e inténtalo nuevamente.");
-        return;
-      } finally { setSaving(false); }
-    }
     setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
     setDescripcion(productoNombre(prod)); setEditingItemId(null);
-    setItemMessage("Producto agregado a la cotización.");
+    setItemMessage(wasEditing ? "Producto actualizado en el borrador. Pulsa “Guardar cambios” para enviarlo a Firebase." : "Producto agregado a la cotización.");
   };
 
   const editItem = (item) => {
@@ -982,12 +990,17 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
               <span className="full"><strong>Dirección:</strong> {clienteSeleccionado.direccion || "Sin registrar"}</span>
             </div>
           )}
+          <div className="quote-identity-grid">
+            <label><span className="field-label">Teléfono del cliente en esta cotización</span><input className="input" value={telefonoCliente} onChange={e => setTelefonoCliente(e.target.value)} placeholder="Ej. 5555-5555" /></label>
+            <label><span className="field-label">Nombre del asesor</span><input className="input" value={asesorNombre} onChange={e => setAsesorNombre(e.target.value)} placeholder="Nombre y apellido" /></label>
+            <label><span className="field-label">Teléfono del asesor</span><input className="input" value={asesorTelefono} onChange={e => setAsesorTelefono(e.target.value)} placeholder="Ej. 5555-5555" /></label>
+          </div>
 
           {pendingTransport && <div className="pending-transport-card"><div><ShoppingCart size={17} /><span><strong>Transporte calculado pendiente</strong><small>Importe: {fmtMoney(pendingTransport.precioUnitario)}. Los kilómetros y la tarifa permanecerán internos.</small></span></div><button className="btn-primary" onClick={addPendingTransport}><Plus size={16} /> Agregar a esta cotización</button></div>}
 
           <div ref={itemEditorRef} className={editingItemId ? "quote-item-editor editing" : "quote-item-editor"}>
           <label className="field-label">{editingItemId ? "Editar producto seleccionado" : "Agregar producto o servicio"}</label>
-          {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Modifica los datos y pulsa <strong>Actualizar y guardar</strong>. El cambio se enviará inmediatamente a Firebase.</span></div>}
+          {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Modifica únicamente este producto y pulsa <strong>Actualizar producto</strong>. Después podrás seguir editando la cotización.</span></div>}
           <div className="item-row quote-item-grid">
             <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {CATALOGO.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -997,7 +1010,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, initial, onSav
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
-            <button type="button" disabled={saving} className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{saving ? "Guardando…" : editingItemId ? <><CheckCircle2 size={14} /> Actualizar y guardar</> : <><Plus size={14} /> Agregar</>}</button>
+            <button type="button" disabled={saving} className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{saving ? "Guardando…" : editingItemId ? <><CheckCircle2 size={14} /> Actualizar producto</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
           <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
@@ -1454,7 +1467,7 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
           window.alert(`No se pudo generar la orden PDF. ${error?.message || "Inténtalo nuevamente."}`);
         }
       }} />}
-      {showEdit && <CotizacionModal contactos={[contacto].filter(Boolean)} initialContactId={cotizacion.contactoId} vendedor={cotizacion.vendedor} initial={cotizacion} onClose={() => setShowEdit(false)} onSave={async (updated) => {
+      {showEdit && <CotizacionModal contactos={[contacto].filter(Boolean)} initialContactId={cotizacion.contactoId} vendedor={cotizacion.vendedor} currentUser={currentUser} vendedores={vendedores} initial={cotizacion} onClose={() => setShowEdit(false)} onSave={async (updated) => {
         if (cotizacion.descuentoAutorizado) {
           const invalidatedAt = new Date().toISOString();
           const invalidatedBy = currentUser?.displayName || currentUser?.email || "Usuario";
@@ -1655,7 +1668,7 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
       </div>
 
       {modal === "cotizacion" && (
-        <CotizacionModal contactos={[contacto]} initialContactId={contacto.id} vendedor={contacto.vendedor}
+        <CotizacionModal contactos={[contacto]} initialContactId={contacto.id} vendedor={contacto.vendedor} currentUser={currentUser} vendedores={vendedores}
           onClose={() => setModal(null)} onSave={async (data) => { await onAddCotizacion(data); setModal(null); }} />
       )}
       {modal === "editar-contacto" && (
@@ -1725,7 +1738,7 @@ function CotizacionesView({ cotizaciones, contactos, vendedores, currentUser, on
         </table>
       )}
       {showModal && (
-        <CotizacionModal contactos={contactos} vendedor={currentUser.nombre}
+        <CotizacionModal contactos={contactos} vendedor={currentUser.nombre} currentUser={currentUser} vendedores={vendedores}
           onClose={() => setShowModal(false)} onSave={async (data) => { await onAdd(data); setShowModal(false); }} />
       )}
     </div>
@@ -2849,6 +2862,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 12px; }
 .client-preview { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 18px; background:#F7F5F0; border:1px solid #E8E4DA; border-radius:9px; padding:11px 13px; margin:-5px 0 16px; font-size:12px; color:#4A5568; }
 .client-preview .full { grid-column:1/-1; }
+.quote-identity-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:0 0 14px; }
 .item-row { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
 .item-row .input { margin-bottom:0; }
 .item-row .qty { width:70px; }
@@ -3066,7 +3080,7 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 }
 
 @container (max-width: 560px) {
-  .form-grid, .row-2, .quote-item-grid, .client-preview { grid-template-columns:1fr; }
+  .form-grid, .row-2, .quote-item-grid, .client-preview, .quote-identity-grid { grid-template-columns:1fr; }
   .cost-part-input { grid-template-columns:minmax(0,1fr) 92px; }
   .cost-part-input > strong { grid-column:1/-1; text-align:left; }
   .cost-table { min-width:500px; }

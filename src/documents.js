@@ -23,7 +23,7 @@ const savePdf = (doc, filename) => {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
-export function downloadQuotePdf(quote, contact, logo) {
+export function downloadQuotePdf(quote, contact, logo, options = {}) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const client = contact || quote.cliente || {};
   const red = [227, 6, 19];
@@ -33,7 +33,7 @@ export function downloadQuotePdf(quote, contact, logo) {
   doc.rect(0, 0, 52, 297, "F");
   doc.setFillColor(...red);
   doc.rect(0, 282, 52, 15, "F");
-  doc.addImage(logo, "PNG", 62, 10, 70, 12);
+  if (logo) doc.addImage(logo, "PNG", 62, 10, 70, 12);
   doc.setDrawColor(205);
   doc.line(60, 28, 198, 28);
 
@@ -49,7 +49,7 @@ export function downloadQuotePdf(quote, contact, logo) {
     ["VÁLIDA HASTA", prettyDate(quote.validaHasta)],
     ["CLIENTE", client.nombre || quote.contactoNombre || ""],
     ["NIT", client.nit || "C/F"],
-    ["TELÉFONO", client.telefono || "Sin registrar"],
+    ["TELÉFONO", quote.telefonoCliente || client.telefono || "Sin registrar"],
     ["CORREO", client.email || "Sin registrar"],
     ["DEPARTAMENTO", client.departamento || "Sin registrar"],
     ["DIRECCIÓN", client.direccion || "Sin registrar"],
@@ -63,7 +63,10 @@ export function downloadQuotePdf(quote, contact, logo) {
     sy += Math.max(15, lines.length * 4 + 9);
   });
   doc.setTextColor(255); doc.setFontSize(7);
-  doc.text(["CASA SOLAR", "Plaza Pericentro Zona 8,", "Quetzaltenango", "PBX 7767 5949", "info@casasolar.com.gt", "", "ASESOR(A) DE VENTAS", quote.vendedor || ""], 9, 238);
+  const advisorName = quote.asesorNombre || quote.vendedor || "Asesor de ventas";
+  const advisorLines = ["CASA SOLAR", "Plaza Pericentro Zona 8,", "Quetzaltenango", "PBX 7767 5949", "info@casasolar.com.gt", "", "ASESOR(A) DE VENTAS", ...doc.splitTextToSize(String(advisorName), 37)];
+  if (quote.asesorTelefono) advisorLines.push(`Tel. ${quote.asesorTelefono}`);
+  doc.text(advisorLines, 9, 238);
   doc.setFont("helvetica", "bold"); doc.text("www.casasolar.com.gt", 10, 291);
 
   doc.setTextColor(...dark);
@@ -89,11 +92,11 @@ export function downloadQuotePdf(quote, contact, logo) {
     theme: "grid",
     styles: { font: "helvetica", fontSize: 7.5, cellPadding: 2.6, textColor: dark },
     headStyles: { fillColor: dark, textColor: 255, fontStyle: "bold" },
-    columnStyles: { 0: { cellWidth: 13, halign: "center" }, 1: { cellWidth: 60 }, 2: { cellWidth: 23, halign: "right" }, 3: { cellWidth: 23, halign: "right" }, 4: { cellWidth: 25, halign: "right", fillColor: [252, 232, 233], fontStyle: "bold" } },
+    columnStyles: { 0: { cellWidth: 13, halign: "center" }, 1: { cellWidth: 56 }, 2: { cellWidth: 23, halign: "right" }, 3: { cellWidth: 23, halign: "right" }, 4: { cellWidth: 23, halign: "right", fillColor: [252, 232, 233], fontStyle: "bold" } },
   });
 
   let y = doc.lastAutoTable.finalY + 9;
-  if (y > 245) { doc.addPage(); y = 22; }
+  if (y > 230) { doc.addPage(); y = 22; }
   if (quote.descuentoAutorizado) {
     const discount = quote.descuentoAutorizado;
     doc.setTextColor(90); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
@@ -114,10 +117,22 @@ export function downloadQuotePdf(quote, contact, logo) {
     `- Garantía del producto: ${quote.garantia || (quote.garantiaAnios ? `${quote.garantiaAnios} años` : "Según condiciones del producto")}.`,
     `- ${quote.notas || "Garantía según el producto y condiciones comerciales de Casa Solar."}`,
   ];
-  doc.text(conditions, 62, y + 26);
-  doc.setDrawColor(...red); doc.line(60, 275, 198, 275);
-  doc.setTextColor(...red); doc.setFont("helvetica", "bold"); doc.text("ACEPTAMOS TARJETAS DE CRÉDITO, DÉBITO Y TRANSFERENCIA", 62, 283);
-  savePdf(doc, `${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  let conditionsY = y + 26;
+  for (const condition of conditions) {
+    const lines = doc.splitTextToSize(condition, 133);
+    if (conditionsY + lines.length * 4 > 270) {
+      doc.addPage();
+      conditionsY = 22;
+    }
+    doc.text(lines, 62, conditionsY);
+    conditionsY += lines.length * 4 + 1;
+  }
+  if (conditionsY + 12 > 291) { doc.addPage(); conditionsY = 22; }
+  const footerY = conditionsY + 10;
+  doc.setDrawColor(...red); doc.line(60, footerY - 8, 198, footerY - 8);
+  doc.setTextColor(...red); doc.setFont("helvetica", "bold"); doc.text("ACEPTAMOS TARJETAS DE CRÉDITO, DÉBITO Y TRANSFERENCIA", 62, footerY);
+  if (options.save !== false) savePdf(doc, `${quote.numero}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  return doc;
 }
 
 export function downloadOrderPdf(quote, contact, logo, order = {}) {

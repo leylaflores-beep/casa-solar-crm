@@ -120,7 +120,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v57";
+const CRM_VERSION = "v52";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -131,8 +131,6 @@ const ESTADO_COLOR = {
 };
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const isContactBoss = user => hasRole(user, "Jefe");
-const canSeeContact = (contact, user) => isContactBoss(user) || contact?.vendedor === user?.nombre;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const seguimientoOrden = (s) => s.fechaHora || `${s.fecha || ""}T00:00:00`;
@@ -603,9 +601,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
     nombre: "", telefono: "", email: "", canal: "Llamada entrante",
     dpi: "", nit: "", direccion: "", departamento: "",
     productoInteres: CATALOGO[0].id, estado: "Nuevo",
-    vendedor: currentUser.nombre,
-    propietarioEmail: currentUser.email || "",
-    esReferido: "No", referidoPor: "",
+    vendedor: hasRole(currentUser, "Vendedor") && !hasRole(currentUser, "Jefe") ? currentUser.nombre : (vendedores[0]?.nombre || currentUser.nombre),
     permisoPromociones: "Pendiente de confirmar", notas: "", fecha: todayISO(),
   };
   const [form, setForm] = useState(() => readDraft(draftKey, defaultForm));
@@ -613,10 +609,6 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
   const saveContact = async () => {
-    if (form.esReferido === "Sí" && !String(form.referidoPor || "").trim()) {
-      window.alert("Escribe el nombre del proveedor o persona que está refiriendo al cliente.");
-      return;
-    }
     try { setSaving(true); await onSave(form); clearDraft(draftKey); }
     catch (error) { console.error("No se pudo guardar el contacto:", error); }
     finally { setSaving(false); }
@@ -687,24 +679,10 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
             </div>
             <div>
               <label className="field-label">Vendedor asignado</label>
-              <select className="input" disabled={!isContactBoss(currentUser)} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
-                <option value={currentUser.nombre}>{isContactBoss(currentUser) ? `Base del jefe · ${currentUser.nombre}` : currentUser.nombre}</option>
-                {vendedores.filter(v => v.nombre !== currentUser.nombre).map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+              <select className="input" disabled={currentUser.rol !== "Jefe"} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
+                {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
               </select>
             </div>
-          </div>
-          <div className="row-2">
-            <div>
-              <label className="field-label">¿Es cliente referido?</label>
-              <select className="input" value={form.esReferido || "No"} onChange={e => setForm(prev => ({ ...prev, esReferido: e.target.value, ...(e.target.value === "No" ? { referidoPor: "" } : {}) }))}>
-                <option>No</option>
-                <option>Sí</option>
-              </select>
-            </div>
-            {form.esReferido === "Sí" && <div>
-              <label className="field-label">Nombre del proveedor que refiere</label>
-              <input className="input" value={form.referidoPor || ""} onChange={e => set("referidoPor", e.target.value)} placeholder="Nombre de la persona o proveedor" />
-            </div>}
           </div>
           <label className="field-label">Permiso para recibir promociones</label>
           <select className="input" value={form.permisoPromociones || "Pendiente de confirmar"} onChange={e => set("permisoPromociones", e.target.value)}>
@@ -717,7 +695,7 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" onClick={onClose}>Cerrar</button>
-          <button className="btn-primary" disabled={!form.nombre.trim() || (form.esReferido === "Sí" && !String(form.referidoPor || "").trim()) || saving} onClick={saveContact}>{saving ? "Guardando…" : "Guardar contacto"}</button>
+          <button className="btn-primary" disabled={!form.nombre.trim() || saving} onClick={saveContact}>{saving ? "Guardando…" : "Guardar contacto"}</button>
         </div>
       </div>
     </div>
@@ -1347,18 +1325,17 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
 }
 
 function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onAssign, onOpen }) {
-  const isBoss = isContactBoss(currentUser);
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
-  const [filterVendedor, setFilterVendedor] = useState(isBoss ? "todos" : currentUser.nombre);
+  const [filterVendedor, setFilterVendedor] = useState(currentUser.rol === "Jefe" ? "todos" : currentUser.nombre);
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState([]);
-  const [assignTo, setAssignTo] = useState("");
+  const [assignTo, setAssignTo] = useState(vendedores[0]?.nombre || "");
 
   const visibles = useMemo(() => {
     return contactos.filter(c => {
-      if (!canSeeContact(c, currentUser)) return false;
+      if (currentUser.rol !== "Jefe" && c.vendedor !== currentUser.nombre) return false;
       if (filterVendedor !== "todos" && c.vendedor !== filterVendedor) return false;
       if (filterEstado !== "todos" && c.estado !== filterEstado) return false;
       if (search && !c.nombre.toLowerCase().includes(search.toLowerCase()) && !c.telefono.includes(search)) return false;
@@ -1388,7 +1365,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
           <option value="todos">Todos los estados</option>
           {ESTADOS_CONTACTO.map(e => <option key={e} value={e}>{e}</option>)}
         </select>
-        {isBoss && (
+        {currentUser.rol === "Jefe" && (
           <select className="input filter-select" value={filterVendedor} onChange={e => setFilterVendedor(e.target.value)}>
             <option value="todos">Todos los vendedores</option>
             {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
@@ -1396,16 +1373,14 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         )}
       </div>
 
-      {isBoss && (
+      {currentUser.rol === "Jefe" && (
         <div className="bulk-bar">
           <label><input type="checkbox" checked={visibles.length > 0 && visibles.every(c => selected.includes(c.id))} onChange={e => setSelected(e.target.checked ? visibles.map(c => c.id) : [])} /> Seleccionar los {visibles.length} visibles</label>
           <span>{selected.length} seleccionados</span>
           <select className="input compact" value={assignTo} onChange={e => setAssignTo(e.target.value)}>
-            <option value="">Seleccionar vendedor</option>
-            <option value={currentUser.nombre}>Asignar a {currentUser.nombre}</option>
-            {vendedores.filter(v => v.nombre !== currentUser.nombre && (hasRole(v, "Vendedor") || v.rol === "Jefe técnico")).map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+            {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
           </select>
-          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={async () => { await onAssign(selected, assignTo); setSelected([]); setAssignTo(""); }}><Users2 size={14} /> Asignar contactos seleccionados</button>
+          <button className="btn-primary small" disabled={!selected.length || !assignTo} onClick={() => { onAssign(selected, assignTo); setSelected([]); }}><Users2 size={14} /> Asignar vendedor</button>
         </div>
       )}
 
@@ -1417,11 +1392,11 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
             const Icon = canalIcon(c.canal);
             return (
               <div key={c.id} className="contact-row" onClick={() => onOpen(c.id)}>
-                {isBoss && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
+                {currentUser.rol === "Jefe" && <input type="checkbox" checked={selected.includes(c.id)} onClick={e => e.stopPropagation()} onChange={e => setSelected(ids => e.target.checked ? [...new Set([...ids, c.id])] : ids.filter(id => id !== c.id))} aria-label={`Seleccionar a ${c.nombre}`} />}
                 <div className="channel-icon"><Icon size={16} /></div>
                 <div className="contact-main">
                   <div className="contact-name">{c.nombre}</div>
-                  <div className="contact-sub">{productoNombre(c.productoInteres)} · Asignado a: {c.vendedor}</div>
+                  <div className="contact-sub">{productoNombre(c.productoInteres)} · {c.vendedor}</div>
                 </div>
                 <div className="contact-date muted">{fmtDate(c.fecha)}</div>
                 <Badge estado={c.estado} />
@@ -1436,7 +1411,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
         <ContactModal vendedores={vendedores} currentUser={currentUser} onClose={() => setShowModal(false)}
           onSave={async (form) => { await onAdd(form); setShowModal(false); }} />
       )}
-      {showImport && <ExcelImportModal contactos={isBoss ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
+      {showImport && <ExcelImportModal contactos={currentUser.rol === "Jefe" ? contactos : contactos.filter(c => c.vendedor === currentUser.nombre)} currentUser={currentUser} onClose={() => setShowImport(false)} onImport={async (rows, mode) => { await onImport(rows, mode); setShowImport(false); }} />}
     </div>
   );
 }
@@ -1473,7 +1448,6 @@ function ContactDetail({ contacto, cotizaciones, seguimientos, vendedores, curre
         <span><strong>Interés:</strong> {productoNombre(contacto.productoInteres)}</span>
         <span><strong>Vendedor:</strong> {contacto.vendedor}</span>
         <span><strong>Registrado:</strong> {fmtDate(contacto.fecha)}</span>
-        <span><strong>Referido:</strong> {contacto.esReferido === "Sí" ? `Sí · ${contacto.referidoPor || "Sin nombre registrado"}` : "No"}</span>
         <span><strong>Promociones:</strong> {contacto.permisoPromociones || "Pendiente de confirmar"}</span>
       </div>
       {contacto.notas && <div className="section-card"><h3>Notas</h3><p>{contacto.notas}</p></div>}
@@ -2211,7 +2185,7 @@ export default function CasaSolarCRM() {
   };
 
   const addContacto = async (form) => {
-    const record = { ...form, vendedor: currentUser.nombre, propietarioEmail: currentUser.email || "", id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
+    const record = { ...form, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" };
     setContactos(current => [record, ...current]);
     try { setContactos(await upsertSharedDataRecords("casasolar:contactos", record)); }
     catch (error) { setContactos(current => current.filter(item => item.id !== record.id)); window.alert("No se pudo guardar el contacto en Firebase. Revisa la conexión e inténtalo nuevamente."); throw error; }
@@ -2224,12 +2198,11 @@ export default function CasaSolarCRM() {
     const changedRecords = [];
     rows.forEach(row => {
       const index = next.findIndex(item => (phone(row.telefono) && phone(item.telefono) === phone(row.telefono)) || name(item.nombre) === name(row.nombre));
-      if (index < 0) { const record = { ...row, vendedor: currentUser.nombre, propietarioEmail: currentUser.email || "", id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
-      const canUpdate = isContactBoss(currentUser) || next[index].vendedor === currentUser.nombre;
+      if (index < 0) { const record = { ...row, id: uid(), creadoEn: new Date().toISOString(), creadoPorEmail: currentUser.email || "" }; next.unshift(record); changedRecords.push(record); added += 1; return; }
+      const canUpdate = currentUser.rol === "Jefe" || next[index].vendedor === currentUser.nombre;
       if (!canUpdate) { skipped += 1; return; }
       if (mode === "update") {
-        const protectedFields = new Set(["id", "vendedor", "privadoLeyla", "creadoPorEmail", "creadoEn", "asignadoPor", "asignadoPorEmail", "asignadoEn", "duplicate"]);
-        const available = Object.fromEntries(Object.entries(row).filter(([key, value]) => !protectedFields.has(key) && value !== "" && value != null));
+        const available = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== "" && value != null));
         next[index] = { ...next[index], ...available, id: next[index].id };
         changedRecords.push(next[index]);
         updated += 1;
@@ -2269,10 +2242,8 @@ export default function CasaSolarCRM() {
     }
   };
   const assignContactos = async (ids, seller) => {
-    if (!isContactBoss(currentUser)) return window.alert("Solo un usuario con rol Jefe puede asignar o reasignar contactos.");
     const selectedIds = new Set(ids);
-    const assignment = { vendedor: seller, asignadoPor: currentUser.nombre, asignadoPorEmail: currentUser.email || "", asignadoEn: new Date().toISOString() };
-    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, ...assignment }));
+    const contactChanges = contactos.filter(item => selectedIds.has(item.id)).map(item => ({ ...item, vendedor: seller }));
     const quoteChanges = cotizaciones.filter(item => selectedIds.has(item.contactoId)).map(item => ({ ...item, vendedor: seller }));
     if (contactChanges.length) setContactos(await upsertSharedDataRecords("casasolar:contactos", contactChanges));
     if (quoteChanges.length) setCotizaciones(await upsertSharedDataRecords("casasolar:cotizaciones", quoteChanges));
@@ -2316,14 +2287,7 @@ export default function CasaSolarCRM() {
         totalConDescuento: updated.total,
         saldo: updated.ordenPedido.estadoPago === "Cancelado" ? "0" : String(Math.max(0, Number(updated.total || 0) - Number(updated.ordenPedido.abono || 0))),
       } : updated.ordenPedido;
-    const saleDate = updated.estado === "Aceptada"
-      ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO())
-      : updated.fechaVenta;
-    const record = {
-      ...updated,
-      ordenPedido: syncedOrder,
-      ...(saleDate ? { fechaVenta: saleDate } : {}),
-    };
+    const record = { ...updated, ordenPedido: syncedOrder, fechaVenta: updated.estado === "Aceptada" ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO()) : updated.fechaVenta };
     const next = await upsertSharedDataRecords("casasolar:cotizaciones", record);
     setCotizaciones(next);
     const previousInstallationDate = previousQuote?.ordenPedido?.fechaInstalacion || "";
