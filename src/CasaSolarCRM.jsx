@@ -131,7 +131,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v64";
+const CRM_VERSION = "v65";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -375,16 +375,42 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const visibleQuotes = cotizaciones.filter(item => canSeeQuote(item, currentUser));
   const municipalityKey = `${normalizeIdentity(address.departamento)}|${normalizeIdentity(address.municipio)}`;
   const resolvedMunicipality = MUNICIPALITY_ALIASES[municipalityKey] || address.municipio.trim();
+  const municipalityNamedDepartment = GUATEMALA_DEPARTMENTS.find(item => normalizeIdentity(item) === normalizeIdentity(resolvedMunicipality));
+  const effectiveDepartment = municipalityNamedDepartment || address.departamento;
   const billableKm = Math.max(0, Number(verifiedKm) || Number(result?.oneWayKm) || 0);
   const billableCost = billableKm * TRANSPORT_RATE;
 
-  const geocode = async (query) => {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=gt&limit=1&q=${encodeURIComponent(query)}`;
+  const locationDistanceKm = (a, b) => {
+    const radius = 6371;
+    const radians = value => Number(value) * Math.PI / 180;
+    const latitude = radians(Number(b.lat) - Number(a.lat));
+    const longitude = radians(Number(b.lon) - Number(a.lon));
+    const formula = Math.sin(latitude / 2) ** 2 + Math.cos(radians(a.lat)) * Math.cos(radians(b.lat)) * Math.sin(longitude / 2) ** 2;
+    return radius * 2 * Math.atan2(Math.sqrt(formula), Math.sqrt(1 - formula));
+  };
+  const geocodeAll = async (query, structured = false) => {
+    const parameters = structured
+      ? `city=${encodeURIComponent(query)}&country=${encodeURIComponent("Guatemala")}`
+      : `q=${encodeURIComponent(query)}`;
+    const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=gt&addressdetails=1&limit=10&${parameters}`;
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error("No se pudo consultar la ubicación.");
     const data = await response.json();
     if (!data?.length) throw new Error(`No encontramos la dirección: ${query}`);
-    return { lat: Number(data[0].lat), lon: Number(data[0].lon), name: data[0].display_name };
+    return data.map(item => ({ lat: Number(item.lat), lon: Number(item.lon), name: item.display_name, address: item.address || {}, type: item.type, importance: Number(item.importance || 0) }));
+  };
+  const geocode = async query => (await geocodeAll(query))[0];
+  const geocodeMunicipality = async municipality => {
+    let candidates = [];
+    try { candidates = await geocodeAll(municipality, true); } catch { /* probar búsqueda libre */ }
+    if (!candidates.length) candidates = await geocodeAll(`${municipality}, Guatemala`);
+    const wanted = normalizeIdentity(municipality);
+    const score = item => {
+      const local = [item.address.city, item.address.town, item.address.village, item.address.municipality].some(value => normalizeIdentity(value) === wanted);
+      const regional = [item.address.county, item.address.state].some(value => normalizeIdentity(value) === wanted);
+      return (local ? 100 : regional ? 20 : 0) + item.importance;
+    };
+    return [...candidates].sort((a, b) => score(b) - score(a))[0];
   };
   const geocodeCandidates = async (queries) => {
     for (const query of [...new Set(queries.filter(Boolean))]) {
@@ -432,15 +458,30 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     try {
       const warehouseQueries = [WAREHOUSES[warehouse].address, ...(WAREHOUSES[warehouse].searchQueries || [])];
       const destinationQueries = [
-        `${[address.referencia, address.casa, address.nomenclatura, address.via, address.zona && `Zona ${address.zona}`, address.lugar, resolvedMunicipality, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
-        `${[address.via, address.zona && `Zona ${address.zona}`, address.lugar, resolvedMunicipality, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
-        `${[address.lugar, resolvedMunicipality, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
-        `${resolvedMunicipality}, ${address.departamento}, Guatemala`,
+        `${[address.referencia, address.casa, address.nomenclatura, address.via, address.zona && `Zona ${address.zona}`, address.lugar, resolvedMunicipality, effectiveDepartment].filter(Boolean).join(", ")}, Guatemala`,
+        `${[address.via, address.zona && `Zona ${address.zona}`, address.lugar, resolvedMunicipality, effectiveDepartment].filter(Boolean).join(", ")}, Guatemala`,
+        `${[address.lugar, resolvedMunicipality, effectiveDepartment].filter(Boolean).join(", ")}, Guatemala`,
+        `${resolvedMunicipality}, ${effectiveDepartment}, Guatemala`,
       ];
       const originPromise = WAREHOUSES[warehouse].coordinates
         ? Promise.resolve({ ...WAREHOUSES[warehouse].coordinates, name: WAREHOUSES[warehouse].address })
         : geocodeCandidates(warehouseQueries);
-      const [origin, target] = await Promise.all([originPromise, geocodeCandidates(destinationQueries)]);
+      const municipalityAnchor = await geocodeMunicipality(resolvedMunicipality);
+      const origin = await originPromise;
+      let target = municipalityAnchor;
+      for (const query of [...new Set(destinationQueries.filter(Boolean))]) {
+        try {
+          const candidates = await geocodeAll(query);
+          const nearby = candidates
+            .map(item => {
+              const municipalityFields = [item.address.city, item.address.town, item.address.village, item.address.municipality, item.address.county, item.address.state];
+              return { ...item, municipalityDistanceKm: locationDistanceKm(municipalityAnchor, item), municipalityMatches: municipalityFields.some(value => normalizeIdentity(value) === normalizeIdentity(resolvedMunicipality)) };
+            })
+            .filter(item => (item.municipalityMatches && item.municipalityDistanceKm <= 50) || item.municipalityDistanceKm <= 10)
+            .sort((a, b) => a.municipalityDistanceKm - b.municipalityDistanceKm || b.importance - a.importance);
+          if (nearby.length) { target = nearby[0]; break; }
+        } catch { /* usar el centro correcto del municipio */ }
+      }
       const routeUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lon},${origin.lat};${target.lon},${target.lat}?overview=false&steps=false`;
       const routeResponse = await fetch(routeUrl);
       const routeData = await routeResponse.json();
@@ -449,7 +490,8 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
       // La tarifa de Q7.50 por kilómetro ya contempla el viaje de ida y regreso.
       // La distancia al destino se cobra una sola vez, sin duplicarla.
       setVerifiedKm("");
-      setResult({ origin, target, oneWayKm, municipalityRequested: address.municipio, municipalityResolved: resolvedMunicipality });
+      const detectedDepartment = target.address?.state || municipalityAnchor.address?.state || effectiveDepartment;
+      setResult({ origin, target, oneWayKm, municipalityRequested: address.municipio, municipalityResolved: resolvedMunicipality, departmentRequested: address.departamento, departmentDetected: detectedDepartment, usedMunicipalityCenter: target === municipalityAnchor });
       setPendingSaved(false); setAttachedMessage("");
     } catch (reason) {
       setError(reason?.message || "No pudimos calcular la ruta. Revisa la dirección e inténtalo de nuevo.");
@@ -487,10 +529,12 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
             <div className="route-result-head"><span>RESULTADO</span><strong>Ida y regreso incluidos</strong></div>
             <div className="route-metric"><span>Distancia hasta el destino</span><strong>{result.oneWayKm.toFixed(1)} km</strong></div>
             {result.municipalityResolved !== result.municipalityRequested && <div className="route-rate-note"><CheckCircle2 size={16}/><span>Se interpretó “{result.municipalityRequested}” como “{result.municipalityResolved}”.</span></div>}
+            {normalizeIdentity(result.departmentDetected) !== normalizeIdentity(result.departmentRequested) && <div className="route-rate-note"><CheckCircle2 size={16}/><span>Se corrigió automáticamente el departamento: “{result.departmentRequested}” se interpretó como “{result.departmentDetected}” para el municipio {result.municipalityResolved}.</span></div>}
+            {result.usedMunicipalityCenter && <small>La dirección específica no pudo confirmarse; se calculó hasta el centro del municipio correcto.</small>}
             <label className="field-label">Distancia confirmada en Google Maps (opcional)</label>
             <input className="input" type="number" min="0" step="0.1" value={verifiedKm} onChange={e=>setVerifiedKm(e.target.value)} placeholder={`Automática: ${result.oneWayKm.toFixed(1)} km`} />
             <small>Si Google Maps muestra otra distancia, escríbela aquí. Este valor sustituirá la distancia automática para el cobro.</small>
-            <a className="btn-ghost route-google-link" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(WAREHOUSES[warehouse].address)}&destination=${encodeURIComponent(`${resolvedMunicipality}, ${address.departamento}, Guatemala`)}&travelmode=driving`} target="_blank" rel="noreferrer">Verificar ruta en Google Maps</a>
+            <a className="btn-ghost route-google-link" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(WAREHOUSES[warehouse].address)}&destination=${encodeURIComponent(`${resolvedMunicipality}, ${effectiveDepartment}, Guatemala`)}&travelmode=driving`} target="_blank" rel="noreferrer">Verificar ruta en Google Maps</a>
             <div className="route-metric"><span>Kilómetros base para cobro</span><strong>{billableKm.toFixed(1)} km</strong></div>
             <div className="route-formula">{billableKm.toFixed(1)} km × Q {TRANSPORT_RATE.toFixed(2)}</div>
             <div className="route-total"><span>Costo de transporte</span><strong>{fmtMoney(billableCost)}</strong></div>
