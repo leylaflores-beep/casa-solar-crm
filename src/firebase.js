@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
-import { arrayUnion, doc, getDoc, getDocFromServer, initializeFirestore, memoryLocalCache, onSnapshot, runTransaction, setDoc, updateDoc } from "firebase/firestore";
+import { arrayUnion, collection, doc, getDoc, getDocFromServer, getDocs, initializeFirestore, memoryLocalCache, onSnapshot, runTransaction, setDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCkDZgfSyIM_KwfA68w5cRN9jj-S4lSeJU",
@@ -286,6 +286,11 @@ export async function getCampaignLink(token) {
 export async function getPublicCampaign(id) {
   const snapshot = await getDoc(doc(db, "public_campaigns", id));
   return snapshot.exists() ? snapshot.data() : null;
+}
+
+export async function getAllPublicCampaigns() {
+  const snapshot = await getDocs(collection(db, "public_campaigns"));
+  return snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
 }
 
 export async function markCampaignAccess(token) {

@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {
   getSharedData,
+  getAllPublicCampaigns,
   appendSharedData,
   appendSharedQuote,
   createCRMUser,
@@ -68,10 +69,15 @@ const WAREHOUSES = {
   quetzaltenango: {
     label: "Bodega Central · Zona 8, Quetzaltenango",
     address: "Plaza Pericentro, Bodega 11, Diagonal 3 D5-51, Zona 8, Quetzaltenango 09001, Guatemala",
+    coordinates: { lat: 14.864356994, lon: -91.534797668 },
     searchQueries: ["Plaza Pericentro, Zona 8, Quetzaltenango, Guatemala", "Diagonal 3, Zona 8, Quetzaltenango, Guatemala", "Zona 8, Quetzaltenango, Guatemala"],
   },
 };
 const TRANSPORT_RATE = 7.5;
+const MUNICIPALITY_ALIASES = {
+  "quiche|santa cruz": "Santa Cruz del Quiché",
+  "quiche|santa cruz del quiche": "Santa Cruz del Quiché",
+};
 const GUATEMALA_DEPARTMENTS = ["Alta Verapaz", "Baja Verapaz", "Chimaltenango", "Chiquimula", "El Progreso", "Escuintla", "Guatemala", "Huehuetenango", "Izabal", "Jalapa", "Jutiapa", "Petén", "Quetzaltenango", "Quiché", "Retalhuleu", "Sacatepéquez", "San Marcos", "Santa Rosa", "Sololá", "Suchitepéquez", "Totonicapán", "Zacapa"];
 
 const readDraft = (key, fallback) => {
@@ -121,7 +127,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v61";
+const CRM_VERSION = "v63";
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -185,6 +191,21 @@ async function storageSet(key, value, shared) {
     throw e;
   }
 }
+
+const mergeRecoverableCampaigns = (sharedCampaigns, publicCampaigns) => {
+  const shared = Array.isArray(sharedCampaigns) ? sharedCampaigns : [];
+  const byId = new Map(shared.filter(item => item?.id).map(item => [item.id, item]));
+  (Array.isArray(publicCampaigns) ? publicCampaigns : []).forEach(item => {
+    if (!item?.id) return;
+    const { imageData, ...safePublicData } = item;
+    const previous = byId.get(item.id);
+    byId.set(item.id, previous
+      ? { ...safePublicData, ...previous, sends: Array.isArray(previous.sends) ? previous.sends : [] }
+      : { ...safePublicData, createdBy: safePublicData.createdBy || "Casa Solar", sends: [] });
+  });
+  if (!byId.size) byId.set(DEFAULT_CAMPAIGN.id, DEFAULT_CAMPAIGN);
+  return [...byId.values()].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+};
 
 function Badge({ estado }) {
   const c = ESTADO_COLOR[estado] || "gray";
@@ -336,7 +357,12 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [attachedMessage, setAttachedMessage] = useState("");
   const [pendingSaved, setPendingSaved] = useState(false);
+  const [verifiedKm, setVerifiedKm] = useState("");
   const visibleQuotes = cotizaciones.filter(item => canSeeQuote(item, currentUser));
+  const municipalityKey = `${normalizeIdentity(address.departamento)}|${normalizeIdentity(address.municipio)}`;
+  const resolvedMunicipality = MUNICIPALITY_ALIASES[municipalityKey] || address.municipio.trim();
+  const billableKm = Math.max(0, Number(verifiedKm) || Number(result?.oneWayKm) || 0);
+  const billableCost = billableKm * TRANSPORT_RATE;
 
   const geocode = async (query) => {
     const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=gt&limit=1&q=${encodeURIComponent(query)}`;
@@ -357,8 +383,8 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const fullDestination = addressParts.join(", ");
   const transportFromResult = () => ({
     id: uid(), productoId: "transporte_ruta", productoNombre: "Transporte", descripcion: "Transporte", tamano: "",
-    cantidad: 1, precioLista: result.cost, precioUnitario: result.cost,
-    ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, direccionIngresada: fullDestination, referencia: address.referencia, kilometros: result.chargedKm, distanciaUnaVia: result.oneWayKm, idaYRegreso: true, tarifaKm: TRANSPORT_RATE, tarifaIncluyeRegreso: true },
+    cantidad: 1, precioLista: billableCost, precioUnitario: billableCost,
+    ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, direccionIngresada: fullDestination, referencia: address.referencia, kilometros: billableKm, distanciaCalculada: result.oneWayKm, distanciaVerificadaGoogle: Number(verifiedKm) || null, idaYRegreso: true, tarifaKm: TRANSPORT_RATE, tarifaIncluyeRegreso: true },
   });
 
   const attachTransport = () => {
@@ -392,13 +418,15 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     try {
       const warehouseQueries = [WAREHOUSES[warehouse].address, ...(WAREHOUSES[warehouse].searchQueries || [])];
       const destinationQueries = [
-        `${[address.referencia, ...addressParts].filter(Boolean).join(", ")}, Guatemala`,
-        `${fullDestination}, Guatemala`,
-        `${[address.via, address.zona && `Zona ${address.zona}`, address.lugar, address.municipio, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
-        `${[address.lugar, address.municipio, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
-        `${address.municipio}, ${address.departamento}, Guatemala`,
+        `${[address.referencia, address.casa, address.nomenclatura, address.via, address.zona && `Zona ${address.zona}`, address.lugar, resolvedMunicipality, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
+        `${[address.via, address.zona && `Zona ${address.zona}`, address.lugar, resolvedMunicipality, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
+        `${[address.lugar, resolvedMunicipality, address.departamento].filter(Boolean).join(", ")}, Guatemala`,
+        `${resolvedMunicipality}, ${address.departamento}, Guatemala`,
       ];
-      const [origin, target] = await Promise.all([geocodeCandidates(warehouseQueries), geocodeCandidates(destinationQueries)]);
+      const originPromise = WAREHOUSES[warehouse].coordinates
+        ? Promise.resolve({ ...WAREHOUSES[warehouse].coordinates, name: WAREHOUSES[warehouse].address })
+        : geocodeCandidates(warehouseQueries);
+      const [origin, target] = await Promise.all([originPromise, geocodeCandidates(destinationQueries)]);
       const routeUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lon},${origin.lat};${target.lon},${target.lat}?overview=false&steps=false`;
       const routeResponse = await fetch(routeUrl);
       const routeData = await routeResponse.json();
@@ -406,8 +434,8 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
       const oneWayKm = routeData.routes[0].distance / 1000;
       // La tarifa de Q7.50 por kilómetro ya contempla el viaje de ida y regreso.
       // La distancia al destino se cobra una sola vez, sin duplicarla.
-      const chargedKm = oneWayKm;
-      setResult({ origin, target, oneWayKm, chargedKm, cost: chargedKm * TRANSPORT_RATE });
+      setVerifiedKm("");
+      setResult({ origin, target, oneWayKm, municipalityRequested: address.municipio, municipalityResolved: resolvedMunicipality });
       setPendingSaved(false); setAttachedMessage("");
     } catch (reason) {
       setError(reason?.message || "No pudimos calcular la ruta. Revisa la dirección e inténtalo de nuevo.");
@@ -444,9 +472,14 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
           {!result ? <div className="route-empty"><MapPin size={28} /><strong>El resultado aparecerá aquí</strong><span>Usaremos la ruta vehicular disponible, no la distancia en línea recta.</span></div> : <>
             <div className="route-result-head"><span>RESULTADO</span><strong>Ida y regreso incluidos</strong></div>
             <div className="route-metric"><span>Distancia hasta el destino</span><strong>{result.oneWayKm.toFixed(1)} km</strong></div>
-            <div className="route-metric"><span>Kilómetros base para cobro</span><strong>{result.chargedKm.toFixed(1)} km</strong></div>
-            <div className="route-formula">{result.chargedKm.toFixed(1)} km × Q {TRANSPORT_RATE.toFixed(2)}</div>
-            <div className="route-total"><span>Costo de transporte</span><strong>{fmtMoney(result.cost)}</strong></div>
+            {result.municipalityResolved !== result.municipalityRequested && <div className="route-rate-note"><CheckCircle2 size={16}/><span>Se interpretó “{result.municipalityRequested}” como “{result.municipalityResolved}”.</span></div>}
+            <label className="field-label">Distancia confirmada en Google Maps (opcional)</label>
+            <input className="input" type="number" min="0" step="0.1" value={verifiedKm} onChange={e=>setVerifiedKm(e.target.value)} placeholder={`Automática: ${result.oneWayKm.toFixed(1)} km`} />
+            <small>Si Google Maps muestra otra distancia, escríbela aquí. Este valor sustituirá la distancia automática para el cobro.</small>
+            <a className="btn-ghost route-google-link" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(WAREHOUSES[warehouse].address)}&destination=${encodeURIComponent(`${resolvedMunicipality}, ${address.departamento}, Guatemala`)}&travelmode=driving`} target="_blank" rel="noreferrer">Verificar ruta en Google Maps</a>
+            <div className="route-metric"><span>Kilómetros base para cobro</span><strong>{billableKm.toFixed(1)} km</strong></div>
+            <div className="route-formula">{billableKm.toFixed(1)} km × Q {TRANSPORT_RATE.toFixed(2)}</div>
+            <div className="route-total"><span>Costo de transporte</span><strong>{fmtMoney(billableCost)}</strong></div>
             <small>Destino encontrado: {result.target.name}</small>
             <small className="route-match-warning">Verifica que el lugar encontrado corresponda al municipio, zona o aldea del cliente antes de adjuntar el transporte.</small>
             <button className="btn-primary route-save-next" onClick={saveForNextQuote} disabled={pendingSaved}><ShoppingCart size={16} /> {pendingSaved ? "Guardado para próxima cotización" : "Guardar para la próxima cotización"}</button>
@@ -2173,13 +2206,14 @@ export default function CasaSolarCRM() {
       if (profile.rol === "Programación") setTab("programacion");
       if (profile.rol === "Bodega") setTab("bodega");
       if (profile.rol === "Facturación") setTab("facturacion");
-      const [v, c, q, s, camp, discountQueue] = await Promise.all([
+      const [v, c, q, s, camp, discountQueue, publicCampaignCopies] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
         storageGet("casasolar:cotizaciones", true),
         storageGet("casasolar:seguimientos", true),
         storageGet("casasolar:campaigns", true),
         storageGet("casasolar:descuentos", true),
+        getAllPublicCampaigns().catch(error => { console.error("No se pudieron consultar las copias públicas de campañas:", error); return []; }),
       ]);
       if (!Array.isArray(c)) {
         window.alert("Firebase no entregó el documento de contactos. No se reemplazará por una lista vacía. Recarga la página y revisa la conexión.");
@@ -2262,11 +2296,12 @@ export default function CasaSolarCRM() {
           console.error("No se pudo completar la conciliación de instalaciones y seguimientos:", error);
         }
       }
-      const loadedCampaigns = camp?.length ? camp : [DEFAULT_CAMPAIGN];
+      const loadedCampaigns = mergeRecoverableCampaigns(camp, publicCampaignCopies);
       setCampaigns(loadedCampaigns);
-      if (!camp?.length) {
+      const campaignsRecovered = loadedCampaigns.some(item => !Array.isArray(camp) || !camp.some(previous => previous.id === item.id));
+      if (campaignsRecovered || !camp?.length) {
         await storageSet("casasolar:campaigns", loadedCampaigns, true);
-        await savePublicCampaign(DEFAULT_CAMPAIGN);
+        if (!publicCampaignCopies.some(item => item.id === DEFAULT_CAMPAIGN.id)) await savePublicCampaign(DEFAULT_CAMPAIGN);
       }
       if (numberRepairs.length) await upsertSharedDataRecords("casasolar:cotizaciones", numberRepairs);
       if (repairedDiscounts) await storageSet("casasolar:descuentos", normalizedDiscounts, true);
@@ -2313,6 +2348,14 @@ export default function CasaSolarCRM() {
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
   const persistSeguimientos = (list) => { setSeguimientos(list); storageSet("casasolar:seguimientos", list, true); };
   const persistCampaigns = (list) => { setCampaigns(list); storageSet("casasolar:campaigns", list, true); };
+  const recoverCampaigns = async () => {
+    const publicCopies = await getAllPublicCampaigns();
+    const shared = await storageGet("casasolar:campaigns", true);
+    const recovered = mergeRecoverableCampaigns(shared, publicCopies);
+    await storageSet("casasolar:campaigns", recovered, true);
+    setCampaigns(recovered);
+    return { total: recovered.length, recovered: recovered.filter(item => !Array.isArray(shared) || !shared.some(previous => previous.id === item.id)).length };
+  };
 
   const handleLogin = (email, password) => loginWithEmail(email, password);
 
@@ -2638,7 +2681,7 @@ export default function CasaSolarCRM() {
             {tab === "seguimientos" && (
               <SeguimientosView seguimientos={seguimientos} contactos={contactos} currentUser={currentUser} onAdd={addSeguimiento} />
             )}
-            {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} />}
+            {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} onRecover={recoverCampaigns} />}
             {tab === "catalogo" && <CatalogoView />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "informes-tecnicos" && <InstallationReportsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} />}
