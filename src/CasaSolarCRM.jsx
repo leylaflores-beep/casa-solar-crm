@@ -4,7 +4,7 @@ import {
   ClipboardList, LayoutDashboard, Plus, Search, X, LogOut, Settings,
   TrendingUp, Wrench, Trash2, Edit3, ChevronRight, CheckCircle2, Clock,
   ArrowLeft, Package, Filter, Download, Mail, ShoppingCart, Send, Megaphone, Upload,
-  Calculator, CircleDollarSign, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, UserX, UserCheck
+  Calculator, CircleDollarSign, MapPin, BadgePercent, ShieldCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, UserX, UserCheck, BookOpen
 } from "lucide-react";
 import {
   getSharedData,
@@ -131,7 +131,17 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v65";
+const CRM_VERSION = "v67";
+const RH_SECTIONS = [
+  "Capacitación Inicial",
+  "Capacitación de Calentadores Solares",
+  "Capacitación de Estructuras y techos",
+  "Capacitación de Visita Técnica para Compra de Calentador",
+  "Capacitación de Visita Técnica correctiva",
+  "Capacitación de Iluminación",
+  "Nichos de Ventas",
+  "CRM Casa Solar",
+];
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -296,18 +306,20 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "reportes", label: "Reportes de ventas", icon: BarChart3 },
     { id: "seguimientos", label: "Seguimientos", icon: ClipboardList },
     { id: "campanas", label: "Campañas", icon: Megaphone },
+    { id: "recursos-humanos", label: "Recursos Humanos", icon: BookOpen },
     { id: "catalogo", label: "Catálogo", icon: Package },
   ] : [];
+  if (!items.some(item => item.id === "recursos-humanos")) items.push({ id: "recursos-humanos", label: "Recursos Humanos", icon: BookOpen });
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
   if (["Jefe", "Jefe técnico", "Técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "informes-tecnicos", label: "Informes de instalación", icon: ClipboardList });
   const queuedPendingIds = new Set(descuentoSolicitudes.filter(request => request.estado === "Pendiente").map(request => request.id));
   const pendingDiscounts = queuedPendingIds.size + cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente" && !queuedPendingIds.has(quote.descuentoSolicitud.id)).length;
   const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
   if (canReviewDiscounts) items.push({ id: "descuentos", label: `Descuentos pendientes${pendingDiscounts ? ` (${pendingDiscounts})` : ""}`, icon: BadgePercent, alert: pendingDiscounts > 0 });
-  if (["Jefe", "Jefe técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "programacion", label: "Programación", icon: Clock });
-  if (["Jefe", "Bodega"].includes(currentUser.rol)) items.push({ id: "bodega", label: "Bodega", icon: Package });
-  if (["Jefe", "Facturación"].includes(currentUser.rol)) items.push({ id: "facturacion", label: "Facturación", icon: FileText });
-  if (["Jefe", "Jefe técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "planificacion", label: "Calendario completo", icon: CalendarDays });
+  if (["Jefe", "Jefe técnico", "Programación"].some(role => hasRole(currentUser, role))) items.push({ id: "programacion", label: "Programación", icon: Clock });
+  if (["Jefe", "Bodega"].some(role => hasRole(currentUser, role))) items.push({ id: "bodega", label: "Bodega", icon: Package });
+  if (["Jefe", "Facturación"].some(role => hasRole(currentUser, role))) items.push({ id: "facturacion", label: "Facturación", icon: FileText });
+  if (["Jefe", "Jefe técnico", "Programación"].some(role => hasRole(currentUser, role))) items.push({ id: "planificacion", label: "Calendario completo", icon: CalendarDays });
   if (currentUser.rol === "Jefe") items.push({ id: "equipo", label: "Equipo", icon: Settings });
 
   return (
@@ -400,15 +412,18 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     return data.map(item => ({ lat: Number(item.lat), lon: Number(item.lon), name: item.display_name, address: item.address || {}, type: item.type, importance: Number(item.importance || 0) }));
   };
   const geocode = async query => (await geocodeAll(query))[0];
-  const geocodeMunicipality = async municipality => {
+  const geocodeMunicipality = async (municipality, department) => {
     let candidates = [];
-    try { candidates = await geocodeAll(municipality, true); } catch { /* probar búsqueda libre */ }
-    if (!candidates.length) candidates = await geocodeAll(`${municipality}, Guatemala`);
+    try { candidates = await geocodeAll(`${municipality}, ${department}, Guatemala`); } catch { /* probar búsqueda estructurada */ }
+    if (!candidates.length) try { candidates = await geocodeAll(municipality, true); } catch { /* probar búsqueda libre */ }
+    if (!candidates.length) candidates = await geocodeAll(`${municipality}, ${department}, Guatemala`);
     const wanted = normalizeIdentity(municipality);
+    const wantedDepartment = normalizeIdentity(department);
     const score = item => {
       const local = [item.address.city, item.address.town, item.address.village, item.address.municipality].some(value => normalizeIdentity(value) === wanted);
       const regional = [item.address.county, item.address.state].some(value => normalizeIdentity(value) === wanted);
-      return (local ? 100 : regional ? 20 : 0) + item.importance;
+      const departmentMatch = [item.address.state, item.address.county].some(value => normalizeIdentity(value) === wantedDepartment || normalizeIdentity(value).includes(wantedDepartment));
+      return (local ? 100 : regional ? 20 : 0) + (departmentMatch ? 200 : -100) + item.importance;
     };
     return [...candidates].sort((a, b) => score(b) - score(a))[0];
   };
@@ -466,7 +481,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
       const originPromise = WAREHOUSES[warehouse].coordinates
         ? Promise.resolve({ ...WAREHOUSES[warehouse].coordinates, name: WAREHOUSES[warehouse].address })
         : geocodeCandidates(warehouseQueries);
-      const municipalityAnchor = await geocodeMunicipality(resolvedMunicipality);
+      const municipalityAnchor = await geocodeMunicipality(resolvedMunicipality, effectiveDepartment);
       const origin = await originPromise;
       let target = municipalityAnchor;
       for (const query of [...new Set(destinationQueries.filter(Boolean))]) {
@@ -630,7 +645,18 @@ function StructureCalculator() {
         {template.roof && <label><span className="field-label">Tipo de techo</span><select className="input" value={roof} onChange={e=>setRoof(e.target.value)}><option>Lámina galvanizada</option><option>Terraza</option><option>Teja sobre terraza</option><option>Teja tradicional</option><option>Otro / pendiente de visita</option></select></label>}
         {acceptsHeight && <div className="height-calculator"><h3>Cálculo de postes por altura</h3><p>Indica la altura terminada. El sistema redondeará hacia arriba las barras comerciales necesarias para los postes verticales.</p><div className="form-grid"><label><span className="field-label">Altura de la estructura (m)</span><input className="input" type="number" min="0.1" step="0.1" value={height} onChange={e=>setHeight(e.target.value)}/></label><label><span className="field-label">Cantidad de postes</span><input className="input" type="number" min="1" step="1" value={supports} onChange={e=>setSupports(e.target.value)}/></label><label><span className="field-label">Largo de cada barra comercial (m)</span><input className="input" type="number" min="0.1" step="0.1" value={barLength} onChange={e=>setBarLength(e.target.value)}/></label><label><span className="field-label">Desperdicio y cortes (%)</span><input className="input" type="number" min="0" step="1" value={wasteRate} onChange={e=>setWasteRate(e.target.value)}/></label></div><div className="height-result"><span>{supports || 0} postes × {height || 0} m = {requiredVerticalLength.toFixed(2)} m; con desperdicio: {lengthWithWaste.toFixed(2)} m</span><strong>{verticalBars} barra{verticalBars===1?"":"s"} de {Number(barLength||0).toFixed(2)} m</strong></div><button className="btn-primary" type="button" onClick={applyHeight}><Calculator size={16}/> Agregar postes calculados a materiales</button><small>Este cálculo agrega únicamente el material de los postes. La base, travesaños, diagonales, anclajes y consumibles permanecen en la plantilla.</small></div>}
         <h3>Materiales requeridos</h3>
-        <div className="structure-materials"><div className="structure-material-head"><span>Material</span><span>Cantidad</span><span>Precio unitario</span><span>Subtotal</span><span></span></div>{materials.map(item=><div className="structure-material-row" key={item.id}><input className="input" value={item.name} onChange={e=>updateMaterial(item.id,"name",e.target.value)}/><label><input className="input" type="number" min="0" step="0.125" value={item.quantity} onChange={e=>updateMaterial(item.id,"quantity",e.target.value)}/><small>{item.unit}</small></label><input className="input" type="number" min="0" step="0.01" value={item.unitPrice} onChange={e=>updateMaterial(item.id,"unitPrice",e.target.value)}/><strong>{fmtMoney((Number(item.quantity)||0)*(Number(item.unitPrice)||0))}</strong><button className="icon-btn" onClick={()=>setMaterials(rows=>rows.filter(row=>row.id!==item.id))} aria-label="Quitar material"><Trash2 size={15}/></button></div>)}</div>
+        <div className="structure-materials">
+          <div className="structure-material-head"><span>Material</span><span>Cantidad</span><span>Precio unitario</span><span>Subtotal</span><span>Acción</span></div>
+          {materials.map(item => (
+            <div className="structure-material-row" key={item.id}>
+              <label className="structure-material-name"><span className="structure-mobile-label">Material</span><input className="input" value={item.name} onChange={e=>updateMaterial(item.id,"name",e.target.value)}/></label>
+              <label className="structure-quantity-field"><span className="structure-mobile-label">Cantidad</span><span className="structure-input-with-unit"><input className="input" type="number" min="0" step="0.125" value={item.quantity} onChange={e=>updateMaterial(item.id,"quantity",e.target.value)}/><small>{item.unit}</small></span></label>
+              <label className="structure-price-field"><span className="structure-mobile-label">Precio unitario</span><span className="structure-money-input"><span>Q</span><input className="input" type="number" min="0" step="0.01" value={item.unitPrice} onChange={e=>updateMaterial(item.id,"unitPrice",e.target.value)}/></span></label>
+              <div className="structure-subtotal"><span className="structure-mobile-label">Subtotal</span><strong>{fmtMoney((Number(item.quantity)||0)*(Number(item.unitPrice)||0))}</strong></div>
+              <button className="icon-btn structure-delete-material" onClick={()=>setMaterials(rows=>rows.filter(row=>row.id!==item.id))} aria-label={`Quitar ${item.name}`} title="Quitar material"><Trash2 size={15}/></button>
+            </div>
+          ))}
+        </div>
         <button className="btn-ghost" onClick={addMaterial}><Plus size={15}/> Agregar material</button>
       </div>
       <div className="section-card cost-result-card">
@@ -1370,7 +1396,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
           {String(form.evidenciasFotograficas || "").split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).length > 0 && <div className="photo-links">{String(form.evidenciasFotograficas).split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).map((link, index) => <a key={`${link}-${index}`} href={link.trim()} target="_blank" rel="noreferrer"><Camera size={14} /> Abrir evidencia {index + 1}</a>)}</div>}
         </div>
-        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && !isTechnician && <button className="btn-primary" disabled={!technicalEvaluationReady} onClick={generateOrder}><Download size={16} /> Generar OP final</button>}{onAdvance && <button className="btn-primary" disabled={roleRequiresApprovedEvaluation(currentUser?.rol) && !technicalEvaluationReady} onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden de pedido</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
       </div>
     </div>
   );
@@ -1894,6 +1920,27 @@ function CatalogoView() {
   );
 }
 
+function HumanResourcesView({ resources, currentUser, onSave }) {
+  const [openSection, setOpenSection] = useState(RH_SECTIONS[0]);
+  const canEdit = hasRole(currentUser, "Jefe");
+  const section = resources.find(item => item.nombre === openSection) || { nombre: openSection, presentaciones: [], hojasTrabajo: [] };
+  const addResource = (type) => {
+    const titulo = window.prompt(type === "presentaciones" ? "Nombre de la presentación o inducción:" : "Nombre de la hoja de trabajo:");
+    if (!titulo?.trim()) return;
+    const url = window.prompt("Pega el enlace de Canva, Drive, Google Slides, documento o archivo:");
+    if (!url?.trim()) return;
+    const updatedSection = { ...section, [type]: [...(section[type] || []), { id: uid(), titulo: titulo.trim(), url: url.trim(), agregadoPor: currentUser.nombre, agregadoEn: new Date().toISOString() }] };
+    onSave(RH_SECTIONS.map(nombre => nombre === openSection ? updatedSection : (resources.find(item => item.nombre === nombre) || { nombre, presentaciones: [], hojasTrabajo: [] })));
+  };
+  const removeResource = (type, id) => {
+    if (!window.confirm("¿Quitar este recurso del menú? El archivo original no será eliminado.")) return;
+    const updatedSection = { ...section, [type]: (section[type] || []).filter(item => item.id !== id) };
+    onSave(RH_SECTIONS.map(nombre => nombre === openSection ? updatedSection : (resources.find(item => item.nombre === nombre) || { nombre, presentaciones: [], hojasTrabajo: [] })));
+  };
+  const list = (title, type) => <div className="resource-column"><div className="section-title"><FileText size={18}/><div><h3>{title}</h3><p>Enlaces disponibles para el equipo.</p></div></div>{(section[type] || []).length ? <div className="mini-list">{section[type].map(item => <div className="mini-row" key={item.id}><a href={item.url} target="_blank" rel="noreferrer"><strong>{item.titulo}</strong></a><small>{item.agregadoPor ? `Agregado por ${item.agregadoPor}` : ""}</small>{canEdit && <button className="icon-btn" onClick={() => removeResource(type, item.id)}><Trash2 size={14}/></button>}</div>)}</div> : <div className="empty-state">Aún no hay recursos cargados.</div>}{canEdit && <button className="btn-primary small" onClick={() => addResource(type)}><Plus size={15}/> Agregar enlace</button>}</div>;
+  return <div><div className="page-head"><h2>Recursos Humanos</h2><p>Inducciones, presentaciones y hojas de trabajo del equipo Casa Solar.</p></div><div className="resources-layout"><div className="section-card resource-menu">{RH_SECTIONS.map(nombre => <button key={nombre} className={openSection === nombre ? "active" : ""} onClick={() => setOpenSection(nombre)}>{nombre}</button>)}</div><div className="section-card resource-content"><h2>{openSection}</h2><div className="resource-grid">{list("Presentaciones y enlaces", "presentaciones")}{list("Hojas de trabajo", "hojasTrabajo")}</div></div></div></div>;
+}
+
 function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, onUpdate, onResetPassword, onToggleAccess, onChangeEmail }) {
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
@@ -1937,7 +1984,7 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
           <label><span className="field-label">Nombre completo</span><input className="input" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre del usuario" /></label>
           <label><span className="field-label">Correo electrónico</span><input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@correo.com" /></label>
           <label><span className="field-label">Contraseña inicial</span><span className="password-field"><input className="input" type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" className="icon-btn" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></span></label>
-          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
+          <label><span className="field-label">Tipo de usuario</span><select className="input" value={rol} onChange={e => setRol(e.target.value)}><option>Vendedor</option><option>Ventas + Programación + Facturación</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select></label>
           <label><span className="field-label">WhatsApp</span><input className="input" value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="Número opcional" /></label>
           {(rol === "Técnico" || rol === "Jefe técnico + Vendedor" || rol === "Jefe técnico") && <label><span className="field-label">Departamentos que cubre</span><input className="input" value={departamentosCobertura} onChange={e => setDepartamentosCobertura(e.target.value)} placeholder="Ej. Guatemala, Sacatepéquez y Chimaltenango" /></label>}
         </div>
@@ -1961,7 +2008,7 @@ function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, 
               <input className="input compact" style={{ flex: 1 }} defaultValue={v.telefono || ""} placeholder="Número de WhatsApp" onBlur={e => onUpdate({ ...v, telefono: e.target.value.trim() })} />
               <input className="input compact" style={{ minWidth: 210, flex: 1 }} type="email" value={emailDrafts[v.id] ?? v.email ?? ""} placeholder="Correo de acceso" onChange={e => setEmailDrafts(current => ({ ...current, [v.id]: e.target.value }))} />
               {(emailDrafts[v.id] ?? v.email ?? "").trim().toLowerCase() !== String(v.email || "").trim().toLowerCase() && <button className="btn-primary small" onClick={async () => { const saved = await onChangeEmail(v, emailDrafts[v.id]); if (saved) setEmailDrafts(current => { const next = { ...current }; delete next[v.id]; return next; }); }}>Guardar correo</button>}
-              <select className="input compact" style={{ minWidth: 190 }} value={Array.isArray(v.roles) && v.roles.includes("Jefe técnico") && v.roles.includes("Vendedor") ? "Jefe técnico + Vendedor" : (v.rol || "Vendedor")} onChange={e => { const special = e.target.value === "Jefe técnico + Vendedor"; onUpdate({ ...v, rol: special ? "Jefe técnico" : e.target.value, roles: special ? ["Jefe técnico", "Vendedor"] : [e.target.value], usuarioEspecial: special }); }}><option>Vendedor</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select>
+              <select className="input compact" style={{ minWidth: 190 }} value={Array.isArray(v.roles) && ["Vendedor", "Programación", "Facturación"].every(role => v.roles.includes(role)) ? "Ventas + Programación + Facturación" : Array.isArray(v.roles) && v.roles.includes("Jefe técnico") && v.roles.includes("Vendedor") ? "Jefe técnico + Vendedor" : (v.rol || "Vendedor")} onChange={e => { const choice = e.target.value; const technicalSales = choice === "Jefe técnico + Vendedor"; const commercialOperations = choice === "Ventas + Programación + Facturación"; onUpdate({ ...v, rol: technicalSales ? "Jefe técnico" : commercialOperations ? "Vendedor" : choice, roles: technicalSales ? ["Jefe técnico", "Vendedor"] : commercialOperations ? ["Vendedor", "Programación", "Facturación"] : [choice], usuarioEspecial: technicalSales }); }}><option>Vendedor</option><option>Ventas + Programación + Facturación</option><option>Jefe técnico + Vendedor</option><option>Jefe técnico</option><option>Técnico</option><option>Programación</option><option>Bodega</option><option>Facturación</option><option>Jefe</option></select>
               {v.usuarioEspecial && <span className="badge badge-blue">Usuario especial</span>}
               {normalizeIdentity(v.nombre) === "carolinacustodio" && !v.email && <span className="badge badge-gray">Agregar correo de Carolina</span>}
               {v.usuarioEspecial && String(v.email || "").toLowerCase() !== SAMUEL_CORRECT_EMAIL && <button className="btn-primary small" onClick={() => onChangeEmail(v, SAMUEL_CORRECT_EMAIL)}><Mail size={14}/> Corregir correo de Samuel</button>}
@@ -2125,6 +2172,7 @@ function DiscountRequestsView({ cotizaciones, contactos, solicitudes, currentUse
 }
 
 function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }) {
+  const [warehouseDrafts, setWarehouseDrafts] = useState({});
   const allOrders = cotizaciones.filter(quote => quote.ordenPedido);
   const orders = mode === "programacion"
     ? allOrders.filter(quote => Boolean(quote.ordenPedido.fechaInstalacion) || ["Programación", "Bodega y Facturación", "Completada"].includes(quote.ordenFlujo?.etapa))
@@ -2143,14 +2191,15 @@ function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }
     const rows = list => list.map(q => <tr key={q.id}><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{contactName(q)}</td><td>{q.ordenPedido.tipoEvaluacion || q.ordenPedido.tipoOrden}</td><td><input className="input compact" type="date" value={q.ordenPedido.fechaInstalacion || ""} onChange={e => updateOrder(q,{fechaInstalacion:e.target.value, estadoInstalacion:e.target.value ? "Programada para instalación" : "Pendiente de programación"},"Fecha programada actualizada")} /></td><td><select className="input compact" value={q.ordenPedido.horario || "Por confirmar"} onChange={e => updateOrder(q,{horario:e.target.value},"Horario actualizado")}><option>Mañana</option><option>Tarde</option><option>Por confirmar</option></select></td><td>{q.ordenPedido.tecnicoAsignadoNombre || "Sin técnico"}</td></tr>);
     return <div><div className="page-head"><h2>Programación</h2><p>Órdenes organizadas por fecha programada.</p></div><div className="section-card"><h3>Pendientes sin fecha ({pending.length})</h3>{pending.length ? <table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(pending)}</tbody></table> : <div className="empty-state">No hay órdenes pendientes.</div>}</div><div className="section-card"><h3>Órdenes programadas</h3><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(scheduled)}</tbody></table></div></div>;
   }
-  if (mode === "bodega") return <div><div className="page-head"><h2>Bodega</h2><p>Equipos que deben prepararse y despacharse.</p></div><div className="section-card"><table className="table"><thead><tr><th>Fecha</th><th>Orden</th><th>Vendedor</th><th>Equipos</th><th>Estado de despacho</th></tr></thead><tbody>{orders.sort((a,b)=>(a.ordenPedido.fechaInstalacion||"9999").localeCompare(b.ordenPedido.fechaInstalacion||"9999")).map(q => <tr key={q.id}><td>{q.ordenPedido.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : "Pendiente"}</td><td>{q.ordenNumero || q.numero.replace("CS-","OP-")}</td><td>{q.vendedor}</td><td>{q.items.filter(i=>i.productoId!=="transporte_ruta").map(i=>`${i.cantidad} × ${nombreItem(i)}`).join(", ")}</td><td><select className="input compact" value={q.ordenPedido.estadoBodega || "Pendiente"} onChange={e=>updateOrder(q,{estadoBodega:e.target.value},`Bodega: ${e.target.value}`)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></td></tr>)}</tbody></table></div></div>;
+  if (mode === "bodega") return <div><div className="page-head"><h2>Bodega</h2><p>Equipos, accesorios y productos preparados para cada cliente y técnico.</p></div><div className="warehouse-orders">{orders.sort((a,b)=>(a.ordenPedido.fechaInstalacion||"9999").localeCompare(b.ordenPedido.fechaInstalacion||"9999")).map(q => { const extras=q.ordenPedido.despachoExtras||[]; const draft=warehouseDrafts[q.id]||{nombre:"",cantidad:1}; return <div className="section-card" key={q.id}><div className="section-title"><Package size={18}/><div><h3>{q.ordenNumero || q.numero.replace("CS-","OP-")} · {contactName(q)}</h3><p>{q.ordenPedido.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : "Fecha pendiente"} · Vendedor: {q.vendedor}</p></div></div><div className="form-grid"><label><span className="field-label">Técnico que recibe</span><input className="input" value={q.ordenPedido.tecnicoDespachoNombre||q.ordenPedido.tecnicoAsignadoNombre||""} onChange={e=>updateOrder(q,{tecnicoDespachoNombre:e.target.value},"Técnico de despacho actualizado")} placeholder="Nombre del técnico"/></label><label><span className="field-label">Estado</span><select className="input" value={q.ordenPedido.estadoBodega || "Pendiente"} onChange={e=>updateOrder(q,{estadoBodega:e.target.value},`Bodega: ${e.target.value}`)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></label></div><h4>Productos cotizados</h4><div className="privacy-note">{q.items.filter(i=>i.productoId!=="transporte_ruta").map(i=>`${i.cantidad} × ${nombreItem(i)}`).join(", ")||"Sin productos"}</div><h4>Accesorios u objetos adicionales</h4>{extras.map(item=><div className="mini-row" key={item.id}><span><strong>{item.cantidad} × {item.nombre}</strong></span><button className="icon-btn" onClick={()=>updateOrder(q,{despachoExtras:extras.filter(extra=>extra.id!==item.id)},`Bodega quitó ${item.nombre}`)}><Trash2 size={14}/></button></div>)}<div className="item-row"><input className="input" value={draft.nombre} onChange={e=>setWarehouseDrafts(all=>({...all,[q.id]:{...draft,nombre:e.target.value}}))} placeholder="Accesorio, herramienta, repuesto u objeto"/><input className="input compact" type="number" min="1" value={draft.cantidad} onChange={e=>setWarehouseDrafts(all=>({...all,[q.id]:{...draft,cantidad:e.target.value}}))}/><button className="btn-primary small" onClick={()=>{if(!draft.nombre.trim())return;updateOrder(q,{despachoExtras:[...extras,{id:uid(),nombre:draft.nombre.trim(),cantidad:Number(draft.cantidad)||1}]},`Bodega agregó ${draft.nombre}`);setWarehouseDrafts(all=>({...all,[q.id]:{nombre:"",cantidad:1}}));}}><Plus size={14}/> Agregar</button></div></div>;})}</div></div>;
   return <div><div className="page-head"><h2>Facturación</h2><p>Facturas que deben generarse para los clientes.</p></div><div className="section-card"><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>NIT</th><th>Total</th><th>Pago</th><th>Factura</th><th>Número</th></tr></thead><tbody>{orders.map(q => { const c=contactos.find(x=>x.id===q.contactoId)||q.cliente||{}; return <tr key={q.id}><td>{q.ordenNumero||q.numero.replace("CS-","OP-")}</td><td>{c.nombre||q.contactoNombre}</td><td>{c.nit||q.ordenPedido.nit||"C/F"}</td><td>{fmtMoney(q.total)}</td><td>{q.ordenPedido.estadoPago||"Pendiente"}</td><td><select className="input compact" value={q.ordenPedido.estadoFactura||"Pendiente"} onChange={e=>updateOrder(q,{estadoFactura:e.target.value},`Facturación: ${e.target.value}`)}><option>Pendiente</option><option>En proceso</option><option>Generada</option><option>Enviada al cliente</option></select></td><td><input className="input compact" value={q.ordenPedido.numeroFactura||""} onChange={e=>updateOrder(q,{numeroFactura:e.target.value},"Número de factura actualizado")} placeholder="Serie / número" /></td></tr>;})}</tbody></table></div></div>;
 }
 
-function PlanningView({ cotizaciones, contactos }) {
+function PlanningView({ cotizaciones, contactos, currentUser, onUpdate }) {
   const [view, setView] = useState("Día"); const [date, setDate] = useState(todayISO());
   const orders = cotizaciones.filter(q=>q.ordenPedido?.fechaInstalacion).filter(q=>{ const d=q.ordenPedido.fechaInstalacion; if(view==="Día") return d===date; if(view==="Semana"){ const start=new Date(`${date}T12:00:00`); start.setDate(start.getDate()-start.getDay()+1); const end=new Date(start); end.setDate(end.getDate()+6); return d>=start.toISOString().slice(0,10)&&d<=end.toISOString().slice(0,10);} return d.slice(0,7)===date.slice(0,7); }).sort((a,b)=>(a.ordenPedido.horario||"").localeCompare(b.ordenPedido.horario||""));
-  return <div><div className="page-head"><h2>Planificación</h2><p>Consulta la agenda por día, semana, mes y horario.</p></div><div className="section-card planning-filters"><div className="role-toggle">{["Día","Semana","Mes"].map(v=><button key={v} className={view===v?"active":""} onClick={()=>setView(v)}>{v}</button>)}</div><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div><div className="section-card">{orders.length===0?<div className="empty-state">No hay actividades para el periodo.</div>:<div className="timeline-list">{orders.map(q=><div className="timeline-item" key={q.id}><strong>{q.ordenPedido.horario||"Por confirmar"}</strong><div><h3>{contactos.find(c=>c.id===q.contactoId)?.nombre||q.contactoNombre}</h3><p>{fmtDate(q.ordenPedido.fechaInstalacion)} · {q.ordenPedido.tipoOrden} · {q.ordenPedido.tecnicoAsignadoNombre||"Sin técnico"}</p></div></div>)}</div>}</div></div>;
+  const move = (quote, fields) => onUpdate({ ...quote, ordenPedido: { ...quote.ordenPedido, ...fields }, ordenFlujo: { ...(quote.ordenFlujo || {}), historial: [...(quote.ordenFlujo?.historial || []), { accion: `Calendario actualizado: ${fields.fechaInstalacion || fields.horario}`, usuario: currentUser.nombre, email: currentUser.email || "", fecha: new Date().toISOString() }] } });
+  return <div><div className="page-head"><h2>Planificación</h2><p>Consulta y cambia instalaciones, servicios o espacios reservados por día, semana y mes.</p></div><div className="section-card planning-filters"><div className="role-toggle">{["Día","Semana","Mes"].map(v=><button key={v} className={view===v?"active":""} onClick={()=>setView(v)}>{v}</button>)}</div><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div><div className="section-card">{orders.length===0?<div className="empty-state">No hay actividades para el periodo.</div>:<div className="timeline-list">{orders.map(q=><div className="timeline-item editable-event" key={q.id}><div className="calendar-edit-fields"><input className="input compact" type="date" value={q.ordenPedido.fechaInstalacion||""} onChange={e=>move(q,{fechaInstalacion:e.target.value})}/><select className="input compact" value={q.ordenPedido.horario||"Por confirmar"} onChange={e=>move(q,{horario:e.target.value})}><option>Mañana</option><option>Tarde</option><option>Por confirmar</option></select></div><div><h3>{contactos.find(c=>c.id===q.contactoId)?.nombre||q.contactoNombre}</h3><p>{q.ordenPedido.tipoOrden} · {q.ordenPedido.tecnicoAsignadoNombre||"Sin técnico"}</p></div></div>)}</div>}</div></div>;
 }
 
 function SalesReportsView({ cotizaciones, vendedores, currentUser }) {
@@ -2239,6 +2288,7 @@ export default function CasaSolarCRM() {
   const [descuentoSolicitudes, setDescuentoSolicitudes] = useState([]);
   const [seguimientos, setSeguimientos] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
+  const [humanResources, setHumanResources] = useState([]);
   const [tab, setTab] = useState("dashboard");
   const [selectedId, setSelectedId] = useState(null);
 
@@ -2263,13 +2313,14 @@ export default function CasaSolarCRM() {
       if (profile.rol === "Programación") setTab("programacion");
       if (profile.rol === "Bodega") setTab("bodega");
       if (profile.rol === "Facturación") setTab("facturacion");
-      const [v, c, q, s, camp, discountQueue, publicCampaignCopies] = await Promise.all([
+      const [v, c, q, s, camp, discountQueue, resourcesData, publicCampaignCopies] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
         storageGet("casasolar:cotizaciones", true),
         storageGet("casasolar:seguimientos", true),
         storageGet("casasolar:campaigns", true),
         storageGet("casasolar:descuentos", true),
+        storageGet("casasolar:recursos-humanos", true),
         getAllPublicCampaigns().catch(error => { console.error("No se pudieron consultar las copias públicas de campañas:", error); return []; }),
       ]);
       if (!Array.isArray(c)) {
@@ -2355,6 +2406,7 @@ export default function CasaSolarCRM() {
       }
       const loadedCampaigns = mergeRecoverableCampaigns(camp, publicCampaignCopies);
       setCampaigns(loadedCampaigns);
+      setHumanResources(Array.isArray(resourcesData) ? resourcesData : []);
       const campaignsRecovered = loadedCampaigns.some(item => !Array.isArray(camp) || !camp.some(previous => previous.id === item.id));
       if (campaignsRecovered || !camp?.length) {
         await storageSet("casasolar:campaigns", loadedCampaigns, true);
@@ -2399,12 +2451,16 @@ export default function CasaSolarCRM() {
     const unsubscribeDiscounts = subscribeSharedData("casasolar:descuentos", value => {
       if (Array.isArray(value)) setDescuentoSolicitudes(value);
     }, error => console.error("No se pudo actualizar la bandeja de descuentos:", error));
-    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); };
+    const unsubscribeResources = subscribeSharedData("casasolar:recursos-humanos", value => {
+      if (Array.isArray(value)) setHumanResources(value);
+    }, error => console.error("No se pudieron actualizar los recursos humanos:", error));
+    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
   const persistSeguimientos = (list) => { setSeguimientos(list); storageSet("casasolar:seguimientos", list, true); };
   const persistCampaigns = (list) => { setCampaigns(list); storageSet("casasolar:campaigns", list, true); };
+  const persistHumanResources = (list) => { setHumanResources(list); storageSet("casasolar:recursos-humanos", list, true); };
   const recoverCampaigns = async () => {
     const publicCopies = await getAllPublicCampaigns();
     const shared = await storageGet("casasolar:campaigns", true);
@@ -2585,8 +2641,9 @@ export default function CasaSolarCRM() {
   const addVendedor = (nombre, telefono) => persistVendedores([...vendedores, { id: uid(), nombre, telefono }]);
   const createUserAccess = async ({ nombre, email, password, rol, telefono, departamentosCobertura }) => {
     const special = rol === "Jefe técnico + Vendedor";
-    const primaryRole = special ? "Jefe técnico" : rol;
-    const roles = special ? ["Jefe técnico", "Vendedor"] : [primaryRole];
+    const commercialOperations = rol === "Ventas + Programación + Facturación";
+    const primaryRole = special ? "Jefe técnico" : commercialOperations ? "Vendedor" : rol;
+    const roles = special ? ["Jefe técnico", "Vendedor"] : commercialOperations ? ["Vendedor", "Programación", "Facturación"] : [primaryRole];
     const profile = await createCRMUser({ nombre, email, password, rol: primaryRole, roles, telefono, departamentosCobertura, createdBy: currentUser });
     const existing = vendedores.find(item => String(item.email || "").toLowerCase() === profile.email);
     if (existing) {
@@ -2739,6 +2796,7 @@ export default function CasaSolarCRM() {
               <SeguimientosView seguimientos={seguimientos} contactos={contactos} currentUser={currentUser} onAdd={addSeguimiento} />
             )}
             {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} onRecover={recoverCampaigns} />}
+            {tab === "recursos-humanos" && <HumanResourcesView resources={humanResources} currentUser={currentUser} onSave={persistHumanResources} />}
             {tab === "catalogo" && <CatalogoView />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "informes-tecnicos" && <InstallationReportsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} />}
@@ -2746,7 +2804,7 @@ export default function CasaSolarCRM() {
             {tab === "programacion" && <OperationsView mode="programacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "bodega" && <OperationsView mode="bodega" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "facturacion" && <OperationsView mode="facturacion" cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
-            {tab === "planificacion" && <PlanningView cotizaciones={cotizaciones} contactos={contactos} />}
+            {tab === "planificacion" && <PlanningView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "equipo" && currentUser.rol === "Jefe" && (
               <EquipoView vendedores={vendedores} currentUser={currentUser} onAdd={addVendedor} onCreateAccess={createUserAccess} onUpdate={updateVendedor} onRemove={removeVendedor} onResetPassword={resetUserPassword} onToggleAccess={toggleUserAccess} onChangeEmail={changeUserEmail} />
             )}
@@ -2769,6 +2827,18 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .loading-wrap { display:flex; align-items:center; justify-content:center; min-height: 400px; color:#E30613; }
 .bulk-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:#fff; border:1px solid #E5E1D8; border-radius:10px; padding:10px 12px; margin-bottom:12px; }
 .bulk-bar label { display:flex; align-items:center; gap:7px; }
+.resources-layout { display:grid; grid-template-columns:280px minmax(0,1fr); gap:16px; }
+.resource-menu { display:flex; flex-direction:column; gap:6px; align-self:start; }
+.resource-menu button { border:0; background:#f7f5f0; color:#344054; padding:11px 12px; border-radius:8px; text-align:left; cursor:pointer; }
+.resource-menu button.active { background:#e30613; color:#fff; font-weight:700; }
+.resource-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-top:16px; }
+.resource-column { border:1px solid #e5e1d8; border-radius:10px; padding:14px; }
+.resource-column .mini-row { align-items:center; }
+.resource-column .mini-row a { flex:1; color:#a10d16; text-decoration:none; }
+.warehouse-orders { display:grid; gap:14px; }
+.editable-event { align-items:center; }
+.calendar-edit-fields { display:flex; gap:8px; flex-wrap:wrap; min-width:300px; }
+@media(max-width:800px){.resources-layout,.resource-grid{grid-template-columns:1fr}.calendar-edit-fields{min-width:0;width:100%}.editable-event{align-items:flex-start;flex-direction:column}.warehouse-orders .item-row{align-items:stretch;flex-direction:column}}
 .spin { animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -3030,12 +3100,22 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .structure-guide { display:flex; gap:10px; margin:0 0 16px; flex-wrap:wrap; }
 .structure-guide > * { flex:1 1 180px; padding:11px 14px; border-radius:10px; background:#fff; border:1px solid var(--border); color:var(--muted); }
 .structure-guide strong { color:var(--red); }
-.structure-materials { margin:10px 0 14px; overflow-x:auto; }
-.structure-material-head,.structure-material-row { display:grid; grid-template-columns:minmax(190px,2fr) minmax(90px,.7fr) minmax(110px,.8fr) minmax(100px,.8fr) 34px; gap:8px; align-items:center; min-width:650px; padding:7px 4px; }
-.structure-material-head { font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--border); }
-.structure-material-row { border-bottom:1px solid var(--border); }
-.structure-material-row label small { display:block; margin:2px 0 0 5px; color:var(--muted); }
-.structure-material-row strong { text-align:right; }
+.structure-materials { margin:10px 0 14px; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:#fff; }
+.structure-material-head,.structure-material-row { display:grid; grid-template-columns:minmax(220px,2fr) minmax(150px,.9fr) minmax(135px,.8fr) minmax(110px,.75fr) 48px; gap:12px; align-items:center; padding:10px 12px; }
+.structure-material-head { font-size:10.5px; font-weight:800; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); background:#F7F5F0; border-bottom:1px solid var(--border); }
+.structure-material-head span:nth-child(4) { text-align:right; }
+.structure-material-head span:last-child { text-align:center; }
+.structure-material-row { min-height:64px; border-bottom:1px solid #EEEAE1; }
+.structure-material-row:last-child { border-bottom:0; }
+.structure-material-row .input { width:100%; min-width:0; margin:0; }
+.structure-mobile-label { display:none; }
+.structure-input-with-unit,.structure-money-input { display:flex; align-items:center; min-width:0; border:1px solid var(--border); border-radius:9px; background:#fff; overflow:hidden; }
+.structure-input-with-unit .input,.structure-money-input .input { border:0; border-radius:0; box-shadow:none; }
+.structure-input-with-unit small { flex:0 0 auto; max-width:72px; padding:0 9px; color:var(--muted); font-size:10.5px; line-height:1.2; text-align:center; overflow-wrap:anywhere; }
+.structure-money-input>span { padding-left:10px; color:var(--muted); font-weight:700; }
+.structure-subtotal { text-align:right; white-space:nowrap; }
+.structure-subtotal strong { font-family:'IBM Plex Mono',monospace; }
+.structure-delete-material { justify-self:center; color:#9B1017; }
 .structure-cost-inputs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:14px; }
 .structure-cost-inputs label>span,.structure-percentages label>span:first-child { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }
 .structure-percentages { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:16px 0; }
@@ -3132,6 +3212,16 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 }
 
 @media (max-width: 720px) {
+  .structure-materials { border:0; background:transparent; overflow:visible; }
+  .structure-material-head { display:none; }
+  .structure-material-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 42px; gap:10px; min-width:0; margin-bottom:12px; padding:12px; border:1px solid var(--border); border-radius:11px; background:#fff; box-shadow:0 2px 8px rgba(20,23,26,.04); }
+  .structure-material-name { grid-column:1/-1; }
+  .structure-quantity-field { grid-column:1; }
+  .structure-price-field { grid-column:2/-1; }
+  .structure-subtotal { grid-column:1/3; display:flex; align-items:center; justify-content:space-between; min-height:38px; padding:8px 10px; border-radius:8px; background:#F7F5F0; text-align:left; }
+  .structure-delete-material { grid-column:3; grid-row:3; align-self:center; }
+  .structure-mobile-label { display:block; margin:0 0 5px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.03em; text-transform:uppercase; }
+  .structure-input-with-unit small { max-width:66px; padding:0 7px; }
   .structure-cost-inputs, .structure-percentages { grid-template-columns:1fr; }
   .structure-guide { display:grid; grid-template-columns:1fr; }
   .app-root { min-height:100dvh; width:100%; border-radius:0; overflow:visible; }
