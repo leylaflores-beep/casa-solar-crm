@@ -131,7 +131,8 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v68";
+const CRM_VERSION = "v69";
+const CATALOG_LINK_SECTIONS = ["Calentadores solares", "Iluminación", "Accesorios y otros productos"];
 const RH_SECTION_DEFINITIONS = [
   { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
   { nombre: "Capacitación de Calentadores Solares", categorias: ["Ventas", "Técnico"] },
@@ -1902,11 +1903,39 @@ function SeguimientosView({ seguimientos, contactos, currentUser, onAdd }) {
   );
 }
 
-function CatalogoView() {
+function CatalogoView({ catalogLinks = [], currentUser, onSave }) {
+  const canEdit = hasRole(currentUser, "Jefe");
+  const addLink = categoria => {
+    const titulo = window.prompt(`Nombre del catálogo de ${categoria}:`);
+    if (!titulo?.trim()) return;
+    const url = window.prompt("Pega el enlace de Canva, Google Drive, página web o PDF:");
+    if (!url?.trim()) return;
+    const normalizedUrl = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+    onSave([{ id: uid(), categoria, titulo: titulo.trim(), url: normalizedUrl, agregadoPor: currentUser.nombre, agregadoEn: new Date().toISOString(), activo: true }, ...catalogLinks]);
+  };
+  const editLink = item => {
+    const titulo = window.prompt("Nombre del catálogo:", item.titulo);
+    if (!titulo?.trim()) return;
+    const url = window.prompt("Enlace del catálogo:", item.url);
+    if (!url?.trim()) return;
+    const normalizedUrl = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+    onSave(catalogLinks.map(link => link.id === item.id ? { ...link, titulo: titulo.trim(), url: normalizedUrl, actualizadoPor: currentUser.nombre, actualizadoEn: new Date().toISOString() } : link));
+  };
+  const removeLink = item => {
+    if (!window.confirm(`¿Retirar el catálogo “${item.titulo}”? El archivo original no será eliminado.`)) return;
+    onSave(catalogLinks.filter(link => link.id !== item.id));
+  };
   const grupos = CATALOGO.reduce((acc, p) => { (acc[p.categoria] = acc[p.categoria] || []).push(p); return acc; }, {});
   return (
     <div>
-      <div className="page-head"><h2>Catálogo</h2><p>Línea de productos y servicios de Casa Solar.</p></div>
+      <div className="page-head"><h2>Catálogos de productos</h2><p>Consulta los catálogos comerciales vigentes de Casa Solar.</p></div>
+      <div className="catalog-link-grid">
+        {CATALOG_LINK_SECTIONS.map(categoria => {
+          const links = catalogLinks.filter(item => item.categoria === categoria && item.activo !== false);
+          return <div className="section-card catalog-link-section" key={categoria}><div className="section-title"><Package size={18}/><div><h3>{categoria}</h3><p>{links.length} catálogo{links.length === 1 ? "" : "s"} disponible{links.length === 1 ? "" : "s"}.</p></div></div>{links.length ? <div className="mini-list">{links.map(item => <div className="mini-row" key={item.id}><a className="catalog-link" href={item.url} target="_blank" rel="noopener noreferrer"><Eye size={15}/><span><strong>{item.titulo}</strong><small>Abrir catálogo</small></span></a>{canEdit && <><button className="icon-btn" onClick={() => editLink(item)} title="Editar enlace"><Edit3 size={14}/></button><button className="icon-btn" onClick={() => removeLink(item)} title="Retirar catálogo"><Trash2 size={14}/></button></>}</div>)}</div> : <div className="empty-state">Aún no hay catálogos publicados en esta categoría.</div>}{canEdit && <button className="btn-primary small" onClick={() => addLink(categoria)}><Plus size={15}/> Agregar catálogo</button>}</div>;
+        })}
+      </div>
+      <div className="page-head catalog-products-head"><h2>Referencia de productos</h2><p>Productos y servicios registrados actualmente en el CRM.</p></div>
       {Object.entries(grupos).map(([cat, items]) => (
         <div key={cat} className="section-card">
           <h3>{cat}s</h3>
@@ -2317,6 +2346,7 @@ export default function CasaSolarCRM() {
   const [campaigns, setCampaigns] = useState([]);
   const [humanResources, setHumanResources] = useState([]);
   const [trainingSubmissions, setTrainingSubmissions] = useState([]);
+  const [productCatalogLinks, setProductCatalogLinks] = useState([]);
   const [tab, setTab] = useState("dashboard");
   const [selectedId, setSelectedId] = useState(null);
 
@@ -2341,7 +2371,7 @@ export default function CasaSolarCRM() {
       if (profile.rol === "Programación") setTab("programacion");
       if (profile.rol === "Bodega") setTab("bodega");
       if (profile.rol === "Facturación") setTab("facturacion");
-      const [v, c, q, s, camp, discountQueue, resourcesData, submissionsData, publicCampaignCopies] = await Promise.all([
+      const [v, c, q, s, camp, discountQueue, resourcesData, submissionsData, catalogLinksData, publicCampaignCopies] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
         storageGet("casasolar:cotizaciones", true),
@@ -2350,6 +2380,7 @@ export default function CasaSolarCRM() {
         storageGet("casasolar:descuentos", true),
         storageGet("casasolar:recursos-humanos", true),
         storageGet("casasolar:capacitacion-respuestas", true),
+        storageGet("casasolar:catalogos-productos", true),
         getAllPublicCampaigns().catch(error => { console.error("No se pudieron consultar las copias públicas de campañas:", error); return []; }),
       ]);
       if (!Array.isArray(c)) {
@@ -2437,6 +2468,7 @@ export default function CasaSolarCRM() {
       setCampaigns(loadedCampaigns);
       setHumanResources(Array.isArray(resourcesData) ? resourcesData : []);
       setTrainingSubmissions(Array.isArray(submissionsData) ? submissionsData : []);
+      setProductCatalogLinks(Array.isArray(catalogLinksData) ? catalogLinksData : []);
       const campaignsRecovered = loadedCampaigns.some(item => !Array.isArray(camp) || !camp.some(previous => previous.id === item.id));
       if (campaignsRecovered || !camp?.length) {
         await storageSet("casasolar:campaigns", loadedCampaigns, true);
@@ -2487,7 +2519,10 @@ export default function CasaSolarCRM() {
     const unsubscribeTraining = subscribeSharedData("casasolar:capacitacion-respuestas", value => {
       if (Array.isArray(value)) setTrainingSubmissions(value);
     }, error => console.error("No se pudieron actualizar las evaluaciones:", error));
-    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); unsubscribeTraining(); };
+    const unsubscribeCatalogLinks = subscribeSharedData("casasolar:catalogos-productos", value => {
+      if (Array.isArray(value)) setProductCatalogLinks(value);
+    }, error => console.error("No se pudieron actualizar los catálogos:", error));
+    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); unsubscribeTraining(); unsubscribeCatalogLinks(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
@@ -2509,6 +2544,7 @@ export default function CasaSolarCRM() {
     persistCampaigns(merged);
   };
   const persistHumanResources = (list) => { setHumanResources(list); storageSet("casasolar:recursos-humanos", list, true); };
+  const persistProductCatalogLinks = (list) => { setProductCatalogLinks(list); storageSet("casasolar:catalogos-productos", list, true); };
   const submitTrainingWork = async record => {
     setTrainingSubmissions(current => [record, ...current]);
     try { await appendSharedData("casasolar:capacitacion-respuestas", record); window.alert("Tu trabajo quedó guardado correctamente para evaluación."); }
@@ -2855,7 +2891,7 @@ export default function CasaSolarCRM() {
             )}
             {tab === "campanas" && <CampaignsView campaigns={visibleCampaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistVisibleCampaigns} onRecover={recoverCampaigns} />}
             {tab === "recursos-humanos" && <HumanResourcesView resources={humanResources} submissions={trainingSubmissions} currentUser={currentUser} onSave={persistHumanResources} onSubmit={submitTrainingWork} onEvaluate={evaluateTrainingWork} />}
-            {tab === "catalogo" && <CatalogoView />}
+            {tab === "catalogo" && <CatalogoView catalogLinks={productCatalogLinks} currentUser={currentUser} onSave={persistProductCatalogLinks} />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "informes-tecnicos" && <InstallationReportsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} />}
             {tab === "descuentos" && <DiscountRequestsView cotizaciones={cotizaciones} contactos={contactos} solicitudes={descuentoSolicitudes} currentUser={currentUser} onUpdate={updateCotizacion} />}
@@ -2915,10 +2951,17 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .submission-content { display:grid; gap:10px; padding-top:12px; }
 .submission-content p { white-space:pre-wrap; }
 .evaluation-controls { display:grid; grid-template-columns:120px minmax(220px,1fr) auto; gap:8px; align-items:center; }
+.catalog-link-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.catalog-link-section { display:flex; flex-direction:column; gap:12px; }
+.catalog-link-section .btn-primary { align-self:flex-start; }
+.catalog-link { display:flex; align-items:center; gap:9px; flex:1; color:#a10d16; text-decoration:none; }
+.catalog-link span { display:flex; flex-direction:column; gap:2px; }
+.catalog-link small { color:#667085; }
+.catalog-products-head { margin-top:24px; }
 .warehouse-orders { display:grid; gap:14px; }
 .editable-event { align-items:center; }
 .calendar-edit-fields { display:flex; gap:8px; flex-wrap:wrap; min-width:300px; }
-@media(max-width:800px){.resources-layout,.resource-grid,.evaluation-controls{grid-template-columns:1fr}.calendar-edit-fields{min-width:0;width:100%}.editable-event{align-items:flex-start;flex-direction:column}.warehouse-orders .item-row{align-items:stretch;flex-direction:column}}
+@media(max-width:800px){.resources-layout,.resource-grid,.evaluation-controls,.catalog-link-grid{grid-template-columns:1fr}.calendar-edit-fields{min-width:0;width:100%}.editable-event{align-items:flex-start;flex-direction:column}.warehouse-orders .item-row{align-items:stretch;flex-direction:column}}
 .spin { animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
