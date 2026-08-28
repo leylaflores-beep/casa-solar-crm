@@ -131,17 +131,18 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v67";
-const RH_SECTIONS = [
-  "Capacitación Inicial",
-  "Capacitación de Calentadores Solares",
-  "Capacitación de Estructuras y techos",
-  "Capacitación de Visita Técnica para Compra de Calentador",
-  "Capacitación de Visita Técnica correctiva",
-  "Capacitación de Iluminación",
-  "Nichos de Ventas",
-  "CRM Casa Solar",
+const CRM_VERSION = "v68";
+const RH_SECTION_DEFINITIONS = [
+  { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
+  { nombre: "Capacitación de Calentadores Solares", categorias: ["Ventas", "Técnico"] },
+  { nombre: "Capacitación de Estructuras y techos", categorias: ["Técnico"] },
+  { nombre: "Capacitación de Visita Técnica para Compra de Calentador", categorias: ["Ventas", "Técnico"] },
+  { nombre: "Capacitación de Visita Técnica correctiva", categorias: ["Técnico"] },
+  { nombre: "Capacitación de Iluminación", categorias: ["Ventas", "Técnico"] },
+  { nombre: "Nichos de Ventas", categorias: ["Ventas"] },
+  { nombre: "CRM Casa Solar", categorias: ["Administrativo", "Ventas", "Técnico"] },
 ];
+const RH_SECTIONS = RH_SECTION_DEFINITIONS.map(item => item.nombre);
 const TIPOS_SEGUIMIENTO = ["Llamada", "WhatsApp", "Visita técnica", "Email", "Otro"];
 
 const ESTADO_COLOR = {
@@ -306,10 +307,10 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
     { id: "reportes", label: "Reportes de ventas", icon: BarChart3 },
     { id: "seguimientos", label: "Seguimientos", icon: ClipboardList },
     { id: "campanas", label: "Campañas", icon: Megaphone },
-    { id: "recursos-humanos", label: "Recursos Humanos", icon: BookOpen },
+    { id: "recursos-humanos", label: "Capacitaciones", icon: BookOpen },
     { id: "catalogo", label: "Catálogo", icon: Package },
   ] : [];
-  if (!items.some(item => item.id === "recursos-humanos")) items.push({ id: "recursos-humanos", label: "Recursos Humanos", icon: BookOpen });
+  if (!items.some(item => item.id === "recursos-humanos")) items.push({ id: "recursos-humanos", label: "Capacitaciones", icon: BookOpen });
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
   if (["Jefe", "Jefe técnico", "Técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "informes-tecnicos", label: "Informes de instalación", icon: ClipboardList });
   const queuedPendingIds = new Set(descuentoSolicitudes.filter(request => request.estado === "Pendiente").map(request => request.id));
@@ -1920,16 +1921,28 @@ function CatalogoView() {
   );
 }
 
-function HumanResourcesView({ resources, currentUser, onSave }) {
-  const [openSection, setOpenSection] = useState(RH_SECTIONS[0]);
+function HumanResourcesView({ resources, submissions, currentUser, onSave, onSubmit, onEvaluate }) {
   const canEdit = hasRole(currentUser, "Jefe");
-  const section = resources.find(item => item.nombre === openSection) || { nombre: openSection, presentaciones: [], hojasTrabajo: [] };
+  const userCategories = canEdit ? ["Administrativo", "Ventas", "Técnico"] : [...new Set([
+    ...(userRoles(currentUser).some(role => ["Programación", "Bodega", "Facturación"].includes(role)) ? ["Administrativo"] : []),
+    ...(hasRole(currentUser, "Vendedor") ? ["Ventas"] : []),
+    ...(userRoles(currentUser).some(role => ["Técnico", "Jefe técnico"].includes(role)) ? ["Técnico"] : []),
+  ])];
+  const visibleDefinitions = RH_SECTION_DEFINITIONS.filter(item => item.categorias.some(category => userCategories.includes(category)));
+  const [openSection, setOpenSection] = useState(visibleDefinitions[0]?.nombre || "");
+  const [viewer, setViewer] = useState(null);
+  const [worksheetAnswers, setWorksheetAnswers] = useState({});
+  const [examAnswers, setExamAnswers] = useState({});
+  const [evaluationDrafts, setEvaluationDrafts] = useState({});
+  useEffect(() => { if (!visibleDefinitions.some(item => item.nombre === openSection)) setOpenSection(visibleDefinitions[0]?.nombre || ""); }, [currentUser.email, openSection]);
+  const definition = RH_SECTION_DEFINITIONS.find(item => item.nombre === openSection);
+  const section = resources.find(item => item.nombre === openSection) || { nombre: openSection, categorias: definition?.categorias || [], presentaciones: [], hojasTrabajo: [] };
   const addResource = (type) => {
     const titulo = window.prompt(type === "presentaciones" ? "Nombre de la presentación o inducción:" : "Nombre de la hoja de trabajo:");
     if (!titulo?.trim()) return;
     const url = window.prompt("Pega el enlace de Canva, Drive, Google Slides, documento o archivo:");
     if (!url?.trim()) return;
-    const updatedSection = { ...section, [type]: [...(section[type] || []), { id: uid(), titulo: titulo.trim(), url: url.trim(), agregadoPor: currentUser.nombre, agregadoEn: new Date().toISOString() }] };
+    const updatedSection = { ...section, categorias: definition?.categorias || section.categorias || [], [type]: [...(section[type] || []), { id: uid(), titulo: titulo.trim(), url: url.trim(), agregadoPor: currentUser.nombre, agregadoEn: new Date().toISOString() }] };
     onSave(RH_SECTIONS.map(nombre => nombre === openSection ? updatedSection : (resources.find(item => item.nombre === nombre) || { nombre, presentaciones: [], hojasTrabajo: [] })));
   };
   const removeResource = (type, id) => {
@@ -1937,8 +1950,22 @@ function HumanResourcesView({ resources, currentUser, onSave }) {
     const updatedSection = { ...section, [type]: (section[type] || []).filter(item => item.id !== id) };
     onSave(RH_SECTIONS.map(nombre => nombre === openSection ? updatedSection : (resources.find(item => item.nombre === nombre) || { nombre, presentaciones: [], hojasTrabajo: [] })));
   };
-  const list = (title, type) => <div className="resource-column"><div className="section-title"><FileText size={18}/><div><h3>{title}</h3><p>Enlaces disponibles para el equipo.</p></div></div>{(section[type] || []).length ? <div className="mini-list">{section[type].map(item => <div className="mini-row" key={item.id}><a href={item.url} target="_blank" rel="noreferrer"><strong>{item.titulo}</strong></a><small>{item.agregadoPor ? `Agregado por ${item.agregadoPor}` : ""}</small>{canEdit && <button className="icon-btn" onClick={() => removeResource(type, item.id)}><Trash2 size={14}/></button>}</div>)}</div> : <div className="empty-state">Aún no hay recursos cargados.</div>}{canEdit && <button className="btn-primary small" onClick={() => addResource(type)}><Plus size={15}/> Agregar enlace</button>}</div>;
-  return <div><div className="page-head"><h2>Recursos Humanos</h2><p>Inducciones, presentaciones y hojas de trabajo del equipo Casa Solar.</p></div><div className="resources-layout"><div className="section-card resource-menu">{RH_SECTIONS.map(nombre => <button key={nombre} className={openSection === nombre ? "active" : ""} onClick={() => setOpenSection(nombre)}>{nombre}</button>)}</div><div className="section-card resource-content"><h2>{openSection}</h2><div className="resource-grid">{list("Presentaciones y enlaces", "presentaciones")}{list("Hojas de trabajo", "hojasTrabajo")}</div></div></div></div>;
+  const saveWorksheet = item => {
+    const answer = String(worksheetAnswers[item.id] || "").trim();
+    if (!answer) return window.alert("Escribe tu respuesta antes de guardarla.");
+    onSubmit({ id: uid(), tipo: "Hoja de trabajo", capacitacion: openSection, recursoId: item.id, recursoTitulo: item.titulo, respuesta: answer, usuarioNombre: currentUser.nombre, usuarioEmail: currentUser.email || "", especialidades: userCategories, estadoEvaluacion: "Pendiente", creadoEn: new Date().toISOString() });
+    setWorksheetAnswers(all => ({ ...all, [item.id]: "" }));
+  };
+  const examQuestions = ["¿Cuáles son los tres aprendizajes principales de esta capacitación?", "Explica cómo aplicarías lo aprendido en un caso real de Casa Solar.", "¿Qué error, riesgo o control debes revisar antes de terminar el proceso?"];
+  const saveExam = () => {
+    const answers = examQuestions.map((_, index) => String(examAnswers[`${openSection}:${index}`] || "").trim());
+    if (answers.some(answer => !answer)) return window.alert("Responde las tres preguntas antes de enviar el examen.");
+    onSubmit({ id: uid(), tipo: "Examen", capacitacion: openSection, preguntas: examQuestions, respuestas: answers, usuarioNombre: currentUser.nombre, usuarioEmail: currentUser.email || "", especialidades: userCategories, estadoEvaluacion: "Pendiente", creadoEn: new Date().toISOString() });
+    setExamAnswers(all => Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith(`${openSection}:`))));
+  };
+  const list = (title, type) => <div className="resource-column"><div className="section-title"><FileText size={18}/><div><h3>{title}</h3><p>{type === "presentaciones" ? "Consulta protegida dentro del CRM." : "Responde y guarda una copia para evaluación."}</p></div></div>{(section[type] || []).length ? <div className="mini-list">{section[type].map(item => <div className="training-resource" key={item.id}><div className="mini-row"><button className="resource-open" onClick={() => setViewer(item)}><Eye size={15}/><strong>{item.titulo}</strong></button>{canEdit && <button className="icon-btn" onClick={() => removeResource(type, item.id)}><Trash2 size={14}/></button>}</div>{type === "hojasTrabajo" && <><textarea className="input worksheet-answer" rows="5" value={worksheetAnswers[item.id] || ""} onChange={event => setWorksheetAnswers(all => ({ ...all, [item.id]: event.target.value }))} placeholder="Trabaja aquí tu respuesta, análisis o ejercicio…"/><button className="btn-primary small" onClick={() => saveWorksheet(item)}><CheckCircle2 size={14}/> Guardar copia para evaluación</button></>}</div>)}</div> : <div className="empty-state">Aún no hay recursos cargados.</div>}{canEdit && <button className="btn-primary small" onClick={() => addResource(type)}><Plus size={15}/> Agregar enlace</button>}</div>;
+  const visibleSubmissions = submissions.filter(item => canEdit || normalizedEmail(item.usuarioEmail) === normalizedEmail(currentUser.email));
+  return <div><div className="page-head"><h2>Capacitaciones</h2><p>Contenido asignado según tu especialidad: {userCategories.join(", ") || "sin categoría asignada"}.</p></div><div className="resources-layout"><div className="section-card resource-menu">{visibleDefinitions.map(item => <button key={item.nombre} className={openSection === item.nombre ? "active" : ""} onClick={() => setOpenSection(item.nombre)}>{item.nombre}<small>{item.categorias.join(" · ")}</small></button>)}</div><div className="resource-main"><div className="section-card resource-content"><h2>{openSection}</h2><div className="training-protection"><ShieldCheck size={17}/><span>El material se consulta dentro del CRM. No hay botón de descarga. Evita compartir, copiar o fotografiar información interna.</span></div><div className="resource-grid">{list("Presentaciones", "presentaciones")}{list("Hojas de trabajo", "hojasTrabajo")}</div></div><div className="section-card training-exam"><h2>Examen de la capacitación</h2><p>Las respuestas quedarán guardadas para que Jefatura evalúe el conocimiento.</p>{examQuestions.map((question,index)=><label key={question}><span className="field-label">{index+1}. {question}</span><textarea className="input" rows="3" value={examAnswers[`${openSection}:${index}`]||""} onChange={event=>setExamAnswers(all=>({...all,[`${openSection}:${index}`]:event.target.value}))}/></label>)}<button className="btn-primary" onClick={saveExam}><CheckCircle2 size={15}/> Enviar examen</button></div><div className="section-card"><h3>{canEdit ? "Respuestas y exámenes recibidos" : "Mis trabajos guardados"}</h3>{visibleSubmissions.length ? <div className="training-submissions">{visibleSubmissions.sort((a,b)=>String(b.creadoEn).localeCompare(String(a.creadoEn))).map(item=><details key={item.id}><summary><strong>{item.tipo} · {item.capacitacion}</strong><small>{item.usuarioNombre} · {new Date(item.creadoEn).toLocaleString("es-GT")} · {item.estadoEvaluacion}</small></summary><div className="submission-content">{item.respuesta&&<p>{item.respuesta}</p>}{(item.preguntas||[]).map((question,index)=><div key={question}><strong>{question}</strong><p>{item.respuestas?.[index]||"—"}</p></div>)}{item.retroalimentacion&&<div className="form-success">Calificación: {item.calificacion}/100 · {item.retroalimentacion}</div>}{canEdit&&<div className="evaluation-controls"><input className="input compact" type="number" min="0" max="100" value={evaluationDrafts[item.id]?.calificacion??item.calificacion??""} onChange={event=>setEvaluationDrafts(all=>({...all,[item.id]:{...(all[item.id]||{}),calificacion:event.target.value}}))} placeholder="Nota /100"/><input className="input" value={evaluationDrafts[item.id]?.retroalimentacion??item.retroalimentacion??""} onChange={event=>setEvaluationDrafts(all=>({...all,[item.id]:{...(all[item.id]||{}),retroalimentacion:event.target.value}}))} placeholder="Retroalimentación"/><button className="btn-primary small" onClick={()=>onEvaluate({...item,...evaluationDrafts[item.id],estadoEvaluacion:"Evaluado",evaluadoPor:currentUser.nombre,evaluadoEn:new Date().toISOString()})}>Guardar evaluación</button></div>}</div></details>)}</div>:<div className="empty-state">Todavía no hay trabajos guardados.</div>}</div></div></div>{viewer&&<div className="modal-overlay" onClick={()=>setViewer(null)} onContextMenu={event=>event.preventDefault()}><div className="modal training-viewer" onClick={event=>event.stopPropagation()}><div className="modal-head"><div><h3>{viewer.titulo}</h3><small>Visualización interna protegida</small></div><button className="icon-btn" onClick={()=>setViewer(null)}><X size={18}/></button></div><iframe title={viewer.titulo} src={viewer.url} sandbox="allow-scripts allow-same-origin allow-forms allow-popups" referrerPolicy="no-referrer"/><div className="privacy-note">Si el proveedor del archivo no permite incrustarlo, Jefatura debe configurar el enlace con permiso “solo lectura”.</div></div></div>}</div>;
 }
 
 function EquipoView({ vendedores, currentUser, onAdd, onCreateAccess, onRemove, onUpdate, onResetPassword, onToggleAccess, onChangeEmail }) {
@@ -2289,6 +2316,7 @@ export default function CasaSolarCRM() {
   const [seguimientos, setSeguimientos] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [humanResources, setHumanResources] = useState([]);
+  const [trainingSubmissions, setTrainingSubmissions] = useState([]);
   const [tab, setTab] = useState("dashboard");
   const [selectedId, setSelectedId] = useState(null);
 
@@ -2313,7 +2341,7 @@ export default function CasaSolarCRM() {
       if (profile.rol === "Programación") setTab("programacion");
       if (profile.rol === "Bodega") setTab("bodega");
       if (profile.rol === "Facturación") setTab("facturacion");
-      const [v, c, q, s, camp, discountQueue, resourcesData, publicCampaignCopies] = await Promise.all([
+      const [v, c, q, s, camp, discountQueue, resourcesData, submissionsData, publicCampaignCopies] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
         storageGet("casasolar:cotizaciones", true),
@@ -2321,6 +2349,7 @@ export default function CasaSolarCRM() {
         storageGet("casasolar:campaigns", true),
         storageGet("casasolar:descuentos", true),
         storageGet("casasolar:recursos-humanos", true),
+        storageGet("casasolar:capacitacion-respuestas", true),
         getAllPublicCampaigns().catch(error => { console.error("No se pudieron consultar las copias públicas de campañas:", error); return []; }),
       ]);
       if (!Array.isArray(c)) {
@@ -2407,6 +2436,7 @@ export default function CasaSolarCRM() {
       const loadedCampaigns = mergeRecoverableCampaigns(camp, publicCampaignCopies);
       setCampaigns(loadedCampaigns);
       setHumanResources(Array.isArray(resourcesData) ? resourcesData : []);
+      setTrainingSubmissions(Array.isArray(submissionsData) ? submissionsData : []);
       const campaignsRecovered = loadedCampaigns.some(item => !Array.isArray(camp) || !camp.some(previous => previous.id === item.id));
       if (campaignsRecovered || !camp?.length) {
         await storageSet("casasolar:campaigns", loadedCampaigns, true);
@@ -2454,13 +2484,41 @@ export default function CasaSolarCRM() {
     const unsubscribeResources = subscribeSharedData("casasolar:recursos-humanos", value => {
       if (Array.isArray(value)) setHumanResources(value);
     }, error => console.error("No se pudieron actualizar los recursos humanos:", error));
-    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); };
+    const unsubscribeTraining = subscribeSharedData("casasolar:capacitacion-respuestas", value => {
+      if (Array.isArray(value)) setTrainingSubmissions(value);
+    }, error => console.error("No se pudieron actualizar las evaluaciones:", error));
+    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); unsubscribeTraining(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
   const persistSeguimientos = (list) => { setSeguimientos(list); storageSet("casasolar:seguimientos", list, true); };
   const persistCampaigns = (list) => { setCampaigns(list); storageSet("casasolar:campaigns", list, true); };
+  const campaignSendBelongsTo = (send, user) => Boolean((normalizedEmail(user?.email) && normalizedEmail(send?.vendedorEmail) === normalizedEmail(user?.email)) || (normalizeIdentity(user?.nombre) && normalizeIdentity(send?.vendedor) === normalizeIdentity(user?.nombre)));
+  const visibleCampaigns = isContactBoss(currentUser) ? campaigns : campaigns.map(campaign => ({ ...campaign, sends: (campaign.sends || []).filter(send => campaignSendBelongsTo(send, currentUser)) }));
+  const persistVisibleCampaigns = list => {
+    if (isContactBoss(currentUser)) return persistCampaigns(list);
+    const incoming = new Map(list.map(item => [item.id, item]));
+    const merged = campaigns.map(existing => {
+      const update = incoming.get(existing.id);
+      if (!update) return existing;
+      const otherSends = (existing.sends || []).filter(send => !campaignSendBelongsTo(send, currentUser));
+      const ownSends = (update.sends || []).filter(send => campaignSendBelongsTo(send, currentUser));
+      return { ...existing, ...update, sends: [...ownSends, ...otherSends] };
+    });
+    list.filter(item => !campaigns.some(existing => existing.id === item.id)).forEach(item => merged.unshift(item));
+    persistCampaigns(merged);
+  };
   const persistHumanResources = (list) => { setHumanResources(list); storageSet("casasolar:recursos-humanos", list, true); };
+  const submitTrainingWork = async record => {
+    setTrainingSubmissions(current => [record, ...current]);
+    try { await appendSharedData("casasolar:capacitacion-respuestas", record); window.alert("Tu trabajo quedó guardado correctamente para evaluación."); }
+    catch (error) { setTrainingSubmissions(current => current.filter(item => item.id !== record.id)); window.alert("No se pudo guardar. Revisa la conexión e inténtalo nuevamente."); throw error; }
+  };
+  const evaluateTrainingWork = async record => {
+    const next = await upsertSharedDataRecords("casasolar:capacitacion-respuestas", record);
+    setTrainingSubmissions(next);
+    window.alert("La evaluación quedó guardada.");
+  };
   const recoverCampaigns = async () => {
     const publicCopies = await getAllPublicCampaigns();
     const shared = await storageGet("casasolar:campaigns", true);
@@ -2795,8 +2853,8 @@ export default function CasaSolarCRM() {
             {tab === "seguimientos" && (
               <SeguimientosView seguimientos={seguimientos} contactos={contactos} currentUser={currentUser} onAdd={addSeguimiento} />
             )}
-            {tab === "campanas" && <CampaignsView campaigns={campaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistCampaigns} onRecover={recoverCampaigns} />}
-            {tab === "recursos-humanos" && <HumanResourcesView resources={humanResources} currentUser={currentUser} onSave={persistHumanResources} />}
+            {tab === "campanas" && <CampaignsView campaigns={visibleCampaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistVisibleCampaigns} onRecover={recoverCampaigns} />}
+            {tab === "recursos-humanos" && <HumanResourcesView resources={humanResources} submissions={trainingSubmissions} currentUser={currentUser} onSave={persistHumanResources} onSubmit={submitTrainingWork} onEvaluate={evaluateTrainingWork} />}
             {tab === "catalogo" && <CatalogoView />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "informes-tecnicos" && <InstallationReportsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} />}
@@ -2827,18 +2885,40 @@ p { margin: 4px 0 0; color: #667085; font-size: 13.5px; }
 .loading-wrap { display:flex; align-items:center; justify-content:center; min-height: 400px; color:#E30613; }
 .bulk-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:#fff; border:1px solid #E5E1D8; border-radius:10px; padding:10px 12px; margin-bottom:12px; }
 .bulk-bar label { display:flex; align-items:center; gap:7px; }
+.import-steps { background:#fff8e7; border:1px solid #ead49b; border-radius:10px; padding:14px; margin-bottom:14px; }
+.import-steps ol { margin:8px 0; padding-left:22px; }
+.import-steps li { margin:5px 0; font-size:13px; }
+.import-steps p { color:#594616; }
 .resources-layout { display:grid; grid-template-columns:280px minmax(0,1fr); gap:16px; }
 .resource-menu { display:flex; flex-direction:column; gap:6px; align-self:start; }
 .resource-menu button { border:0; background:#f7f5f0; color:#344054; padding:11px 12px; border-radius:8px; text-align:left; cursor:pointer; }
 .resource-menu button.active { background:#e30613; color:#fff; font-weight:700; }
+.resource-menu button small { display:block; margin-top:3px; opacity:.78; font-size:10px; }
 .resource-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-top:16px; }
 .resource-column { border:1px solid #e5e1d8; border-radius:10px; padding:14px; }
 .resource-column .mini-row { align-items:center; }
 .resource-column .mini-row a { flex:1; color:#a10d16; text-decoration:none; }
+.resource-main { display:grid; gap:16px; }
+.resource-open { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:#a10d16; cursor:pointer; padding:7px 0; text-align:left; flex:1; }
+.training-resource { border-bottom:1px solid #eee; padding:8px 0 12px; }
+.training-resource:last-child { border-bottom:0; }
+.worksheet-answer { width:100%; resize:vertical; margin:8px 0; }
+.training-protection { display:flex; gap:9px; align-items:flex-start; background:#fff8e7; border:1px solid #ead49b; padding:10px 12px; border-radius:9px; margin-top:12px; color:#594616; font-size:12px; }
+.training-exam { display:grid; gap:12px; }
+.training-exam label { display:grid; gap:5px; }
+.training-viewer { width:min(1100px,95vw); height:min(820px,92vh); }
+.training-viewer iframe { width:100%; height:calc(100% - 105px); border:0; background:#f4f4f4; }
+.training-submissions { display:grid; gap:8px; margin-top:12px; }
+.training-submissions details { border:1px solid #e5e1d8; border-radius:9px; padding:10px 12px; background:#fff; }
+.training-submissions summary { cursor:pointer; display:flex; flex-direction:column; gap:3px; }
+.training-submissions summary small { color:#667085; }
+.submission-content { display:grid; gap:10px; padding-top:12px; }
+.submission-content p { white-space:pre-wrap; }
+.evaluation-controls { display:grid; grid-template-columns:120px minmax(220px,1fr) auto; gap:8px; align-items:center; }
 .warehouse-orders { display:grid; gap:14px; }
 .editable-event { align-items:center; }
 .calendar-edit-fields { display:flex; gap:8px; flex-wrap:wrap; min-width:300px; }
-@media(max-width:800px){.resources-layout,.resource-grid{grid-template-columns:1fr}.calendar-edit-fields{min-width:0;width:100%}.editable-event{align-items:flex-start;flex-direction:column}.warehouse-orders .item-row{align-items:stretch;flex-direction:column}}
+@media(max-width:800px){.resources-layout,.resource-grid,.evaluation-controls{grid-template-columns:1fr}.calendar-edit-fields{min-width:0;width:100%}.editable-event{align-items:flex-start;flex-direction:column}.warehouse-orders .item-row{align-items:stretch;flex-direction:column}}
 .spin { animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
