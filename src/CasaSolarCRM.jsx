@@ -28,11 +28,13 @@ import {
 } from "./firebase.js";
 import { CampaignsView, DEFAULT_CAMPAIGN, ExcelImportModal, PublicPromotion } from "./Campaigns.jsx";
 import { KARDEX_CATALOG } from "./kardexCatalog.js";
+import { CompanyDocumentsView } from "./CompanyDocumentsView.jsx";
 
 // Los generadores PDF son pesados; se cargan únicamente cuando alguien descarga un documento.
 const downloadQuotePdf = (...args) => import("./documents.js").then(module => module.downloadQuotePdf(...args));
 const downloadOrderPdf = (...args) => import("./documents.js").then(module => module.downloadOrderPdf(...args));
 const downloadInstallationReportPdf = (...args) => import("./documents.js").then(module => module.downloadInstallationReportPdf(...args));
+const downloadCompanyDocumentPdf = (...args) => import("./documents.js").then(module => module.downloadCompanyDocumentPdf(...args));
 
 const DISCOUNT_AUTHORIZERS = {
   "ligiaeugeniamolina@gmail.com": "Ligia Eugenia Molina",
@@ -44,6 +46,7 @@ const hasRole = (user, role) => userRoles(user).includes(role);
 const roleLabel = user => userRoles(user).join(" + ") || "Usuario";
 const SAMUEL_CORRECT_EMAIL = "casasolar.bodega.gt@gmail.com";
 const canUseStructureCalculator = user => hasRole(user, "Jefe") || String(user?.email || "").toLowerCase() === SAMUEL_CORRECT_EMAIL || normalizeIdentity(user?.nombre) === "samuellemus";
+const canUseCompanyDocuments = user => hasRole(user, "Jefe") || String(user?.email || "").toLowerCase() === SAMUEL_CORRECT_EMAIL || normalizeIdentity(user?.nombre) === "samuellemus";
 const SAMUEL_WRONG_EMAIL = "casasolar.bodegagt@gmail.com";
 const normalizeIdentity = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const consolidateSamuelUser = team => {
@@ -109,6 +112,8 @@ const BASE_CATALOGO = [
   { id: "proyecto_red", nombre: "Proyecto conectado a red", categoria: "Proyecto" },
   { id: "mantenimiento", nombre: "Servicio de mantenimiento", categoria: "Servicio" },
   { id: "correctivo", nombre: "Servicio correctivo", categoria: "Servicio" },
+  { id: "desmontaje_calentador_otra_marca", nombre: "Desarmado o desmontaje de calentador solar de otra marca", categoria: "Servicio" },
+  { id: "instalacion_calentador_otra_marca", nombre: "Instalación de calentador solar de otra marca", categoria: "Servicio" },
   { id: "visita_revision", nombre: "Visita técnica de revisión", categoria: "Visita" },
   { id: "visita_correctiva", nombre: "Visita técnica correctiva", categoria: "Visita" },
   { id: "accesorios", nombre: "Accesorios", categoria: "Producto" },
@@ -134,7 +139,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v71";
+const CRM_VERSION = "v72";
 const CATALOG_LINK_SECTIONS = ["Calentadores solares", "Iluminación", "Accesorios y otros productos"];
 const RH_SECTION_DEFINITIONS = [
   { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
@@ -330,6 +335,7 @@ function Sidebar({ tab, setTab, currentUser, cotizaciones = [], descuentoSolicit
   if (!items.some(item => item.id === "recursos-humanos")) items.push({ id: "recursos-humanos", label: "Capacitaciones", icon: BookOpen });
   if (["Jefe", "Jefe técnico", "Técnico"].includes(currentUser.rol)) items.push({ id: "ordenes-tecnicas", label: "Órdenes técnicas", icon: Wrench });
   if (["Jefe", "Jefe técnico", "Técnico", "Programación"].includes(currentUser.rol)) items.push({ id: "informes-tecnicos", label: "Informes de instalación", icon: ClipboardList });
+  if (canUseCompanyDocuments(currentUser)) items.push({ id: "documentos-empresa", label: "Documentos e informes", icon: FileText });
   const queuedPendingIds = new Set(descuentoSolicitudes.filter(request => request.estado === "Pendiente").map(request => request.id));
   const pendingDiscounts = queuedPendingIds.size + cotizaciones.filter(quote => quote.descuentoSolicitud?.estado === "Pendiente" && !queuedPendingIds.has(quote.descuentoSolicitud.id)).length;
   const canReviewDiscounts = currentUser.rol === "Jefe" || Boolean(DISCOUNT_AUTHORIZERS[String(currentUser.email || "").toLowerCase()]);
@@ -1232,6 +1238,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
     evidenciasFotograficas: "",
     tipoServicio: "Mantenimiento", equipoExistente: "", fallaReportada: "", servicioRequerido: "", materialesServicio: "",
+    tamanoCalentadorOtraMarca: "", instalacionAdicional: "No", metrosInstalacionAdicional: "",
     motivoRevision: "", diagnosticoPreliminar: "", medicionesTecnicas: "", accesoTecho: "Sí", riesgosDetectados: "",
     areaIluminar: "", alturaInstalacionLuz: "", cantidadLuminarias: "", potenciaLuminaria: "", ubicacionPanelSolar: "", horasIluminacion: "",
     tecnicoAsignadoEmail: "", tecnicoAsignadoNombre: "", departamentoVisita: contacto?.departamento || "",
@@ -1417,7 +1424,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <div className="form-grid">{select("¿Facturar a nombre distinto del cliente?", "facturarDistintoCliente", ["No", "Sí"])}{select("Tipo", "facturacionTipo", ["Persona individual", "Empresa"])}{field("Nombre o razón social", "facturacionNombre")}{field("NIT de facturación", "facturacionNit")}{field("Dirección fiscal", "facturacionDireccion")}{field("Teléfono de facturación", "facturacionTelefono")}{field("Correo de facturación", "facturacionEmail", "email")}</div>
           {form.modalidadEntrega === "Solo despacho" ? <div className="privacy-note"><Package size={16}/><span>Solo se entregará el producto. No es necesario llenar condiciones de techo, tuberías ni otros campos técnicos de instalación.</span></div> : <><h4>Datos técnicos · {form.tipoOrden || "Calentadores"}</h4>
           {(form.tipoOrden || "Calentadores") === "Calentadores" && <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Concreto", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas", "Otro"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>}
-          {form.tipoOrden === "Servicios" && <div className="form-grid">{select("Tipo de servicio", "tipoServicio", ["Mantenimiento", "Reparación", "Instalación", "Desinstalación", "Otro"])}{field("Equipo existente", "equipoExistente")}{field("Falla reportada", "fallaReportada")}{field("Servicio requerido", "servicioRequerido")}{field("Materiales o repuestos previstos", "materialesServicio")}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
+          {form.tipoOrden === "Servicios" && <div className="form-grid">{select("Tipo de servicio", "tipoServicio", ["Mantenimiento", "Reparación", "Instalación", "Desinstalación", "Desarmado o desmontaje de calentador solar de otra marca", "Instalación de calentador solar de otra marca", "Otro"])}{field("Equipo existente", "equipoExistente")}{field("Tamaño o capacidad del calentador", "tamanoCalentadorOtraMarca")}{select("¿Requiere instalación adicional?", "instalacionAdicional", ["No", "Sí"])}{form.instalacionAdicional === "Sí" && field("Metros de instalación adicional", "metrosInstalacionAdicional", "number")}{field("Falla reportada", "fallaReportada")}{field("Servicio requerido", "servicioRequerido")}{field("Materiales o repuestos previstos", "materialesServicio")}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
           {form.tipoOrden === "Revisión técnica" && <div className="form-grid">{field("Motivo de la revisión", "motivoRevision")}{field("Equipo o sistema a revisar", "equipoExistente")}{field("Diagnóstico preliminar", "diagnosticoPreliminar")}{field("Mediciones necesarias", "medicionesTecnicas")}{select("Acceso al techo", "accesoTecho", ["Sí", "No", "Por confirmar"])}{field("Riesgos o condiciones especiales", "riesgosDetectados")}</div>}
           {form.tipoOrden === "Iluminación" && <div className="form-grid">{field("Área a iluminar (m²)", "areaIluminar", "number")}{field("Altura de instalación", "alturaInstalacionLuz")}{field("Cantidad de luminarias", "cantidadLuminarias", "number")}{field("Potencia de luminaria (W)", "potenciaLuminaria", "number")}{field("Ubicación del panel solar", "ubicacionPanelSolar")}{field("Horas de iluminación requeridas", "horasIluminacion")}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Concreto", "Otro"])}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}</>}
           <h4>{isTechnicalArea ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
@@ -2411,6 +2418,8 @@ export default function CasaSolarCRM() {
   const [humanResources, setHumanResources] = useState([]);
   const [trainingSubmissions, setTrainingSubmissions] = useState([]);
   const [productCatalogLinks, setProductCatalogLinks] = useState([]);
+  const [companyDocuments, setCompanyDocuments] = useState([]);
+  const [companyDocumentAssets, setCompanyDocumentAssets] = useState({ firma: "", sello: "", firmaNombre: "", selloNombre: "" });
   const [tab, setTab] = useState("dashboard");
   const [selectedId, setSelectedId] = useState(null);
 
@@ -2435,7 +2444,7 @@ export default function CasaSolarCRM() {
       if (profile.rol === "Programación") setTab("programacion");
       if (profile.rol === "Bodega") setTab("bodega");
       if (profile.rol === "Facturación") setTab("facturacion");
-      const [v, c, q, s, camp, discountQueue, resourcesData, submissionsData, catalogLinksData, publicCampaignCopies] = await Promise.all([
+      const [v, c, q, s, camp, discountQueue, resourcesData, submissionsData, catalogLinksData, documentsData, documentAssetsData, publicCampaignCopies] = await Promise.all([
         storageGet("casasolar:vendedores", true),
         storageGet("casasolar:contactos", true),
         storageGet("casasolar:cotizaciones", true),
@@ -2445,6 +2454,8 @@ export default function CasaSolarCRM() {
         storageGet("casasolar:recursos-humanos", true),
         storageGet("casasolar:capacitacion-respuestas", true),
         storageGet("casasolar:catalogos-productos", true),
+        storageGet("casasolar:documentos-empresa", true),
+        storageGet("casasolar:documentos-activos", true),
         getAllPublicCampaigns().catch(error => { console.error("No se pudieron consultar las copias públicas de campañas:", error); return []; }),
       ]);
       if (!Array.isArray(c)) {
@@ -2533,6 +2544,8 @@ export default function CasaSolarCRM() {
       setHumanResources(Array.isArray(resourcesData) ? resourcesData : []);
       setTrainingSubmissions(Array.isArray(submissionsData) ? submissionsData : []);
       setProductCatalogLinks(Array.isArray(catalogLinksData) ? catalogLinksData : []);
+      setCompanyDocuments(Array.isArray(documentsData) ? documentsData : []);
+      setCompanyDocumentAssets(documentAssetsData && !Array.isArray(documentAssetsData) ? documentAssetsData : { firma: "", sello: "", firmaNombre: "", selloNombre: "" });
       const campaignsRecovered = loadedCampaigns.some(item => !Array.isArray(camp) || !camp.some(previous => previous.id === item.id));
       if (campaignsRecovered || !camp?.length) {
         await storageSet("casasolar:campaigns", loadedCampaigns, true);
@@ -2586,7 +2599,13 @@ export default function CasaSolarCRM() {
     const unsubscribeCatalogLinks = subscribeSharedData("casasolar:catalogos-productos", value => {
       if (Array.isArray(value)) setProductCatalogLinks(value);
     }, error => console.error("No se pudieron actualizar los catálogos:", error));
-    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); unsubscribeTraining(); unsubscribeCatalogLinks(); };
+    const unsubscribeCompanyDocuments = subscribeSharedData("casasolar:documentos-empresa", value => {
+      if (Array.isArray(value)) setCompanyDocuments(value);
+    }, error => console.error("No se pudieron actualizar los documentos de empresa:", error));
+    const unsubscribeDocumentAssets = subscribeSharedData("casasolar:documentos-activos", value => {
+      if (value && !Array.isArray(value)) setCompanyDocumentAssets(value);
+    }, error => console.error("No se pudieron actualizar las firmas y sellos:", error));
+    return () => { unsubscribeProfile(); unsubscribeSellers(); unsubscribeContacts(); unsubscribeQuotes(); unsubscribeFollowups(); unsubscribeCampaigns(); unsubscribeDiscounts(); unsubscribeResources(); unsubscribeTraining(); unsubscribeCatalogLinks(); unsubscribeCompanyDocuments(); unsubscribeDocumentAssets(); };
   }, [currentUser?.uid]);
 
   const persistVendedores = (list) => { setVendedores(list); storageSet("casasolar:vendedores", list, true); };
@@ -2608,6 +2627,14 @@ export default function CasaSolarCRM() {
     persistCampaigns(merged);
   };
   const persistHumanResources = (list) => { setHumanResources(list); storageSet("casasolar:recursos-humanos", list, true); };
+  const persistCompanyDocument = async record => {
+    const next = await upsertSharedDataRecords("casasolar:documentos-empresa", record);
+    if (Array.isArray(next)) setCompanyDocuments(next);
+  };
+  const persistCompanyDocumentAssets = async assets => {
+    setCompanyDocumentAssets(assets);
+    await storageSet("casasolar:documentos-activos", assets, true);
+  };
   const persistProductCatalogLinks = (list) => { setProductCatalogLinks(list); storageSet("casasolar:catalogos-productos", list, true); };
   const submitTrainingWork = async record => {
     setTrainingSubmissions(current => [record, ...current]);
@@ -2956,6 +2983,7 @@ export default function CasaSolarCRM() {
             {tab === "campanas" && <CampaignsView campaigns={visibleCampaigns} contactos={contactos} currentUser={{ ...currentUser, telefono: vendedores.find(v => v.nombre === currentUser.nombre)?.telefono || "" }} onChange={persistVisibleCampaigns} onRecover={recoverCampaigns} />}
             {tab === "recursos-humanos" && <HumanResourcesView resources={humanResources} submissions={trainingSubmissions} currentUser={currentUser} onSave={persistHumanResources} onSubmit={submitTrainingWork} onEvaluate={evaluateTrainingWork} />}
             {tab === "catalogo" && <CatalogoView catalogLinks={productCatalogLinks} currentUser={currentUser} onSave={persistProductCatalogLinks} />}
+            {tab === "documentos-empresa" && canUseCompanyDocuments(currentUser) && <CompanyDocumentsView records={companyDocuments} assets={companyDocumentAssets} contactos={contactos} currentUser={currentUser} onSave={persistCompanyDocument} onSaveAssets={persistCompanyDocumentAssets} onDownload={(record) => downloadCompanyDocumentPdf(record, companyDocumentAssets, LOGO_FULL)} />}
             {tab === "ordenes-tecnicas" && <TechnicalOrdersView cotizaciones={cotizaciones} contactos={contactos} vendedores={vendedores} currentUser={currentUser} onUpdate={updateCotizacion} />}
             {tab === "informes-tecnicos" && <InstallationReportsView cotizaciones={cotizaciones} contactos={contactos} currentUser={currentUser} />}
             {tab === "descuentos" && <DiscountRequestsView cotizaciones={cotizaciones} contactos={contactos} solicitudes={descuentoSolicitudes} currentUser={currentUser} onUpdate={updateCotizacion} />}

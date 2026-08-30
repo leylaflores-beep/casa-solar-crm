@@ -213,6 +213,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}, options = {})
   const technicalByType = {
     Servicios: [
       `Tipo de servicio: ${order.tipoServicio || "Sin indicar"}`, `Equipo existente: ${order.equipoExistente || "Sin indicar"}`,
+      `Tamaño/capacidad: ${order.tamanoCalentadorOtraMarca || "Sin indicar"}`, `Instalación adicional: ${order.instalacionAdicional || "No"}${order.instalacionAdicional === "Sí" ? ` / ${order.metrosInstalacionAdicional || "0"} metros` : ""}`,
       `Falla reportada: ${order.fallaReportada || "Sin indicar"}`, `Servicio requerido: ${order.servicioRequerido || "Sin indicar"}`,
       `Materiales/repuestos: ${order.materialesServicio || "Sin indicar"}`, `¿Entra camión?: ${order.entraCamion || "Sin indicar"}`,
     ],
@@ -250,7 +251,8 @@ export function downloadOrderPdf(quote, contact, logo, order = {}, options = {})
     ? ["SOLO ENTREGA: no requiere llenar condiciones técnicas de instalación.", transportText, `Estado Bodega: ${order.estadoBodega || "Pendiente"}`, `Estado envío: ${order.estadoInstalacion || "Pendiente"}`]
     : [...(technicalByType[order.tipoOrden] || heaterTechnical), transportText];
   doc.setFont("helvetica", "normal"); doc.setFontSize(5.7);
-  let technicalY = 173;
+  // La primera línea inicia con un margen visible después de la barra negra.
+  let technicalY = 177;
   technical.forEach(text => {
     const lines = doc.splitTextToSize(text, 89).slice(0, 2);
     doc.text(lines, 112, technicalY);
@@ -330,4 +332,53 @@ export function downloadInstallationReportPdf(quote, contact, logo, order = {}) 
   doc.setDrawColor(160); doc.line(25, 270, 85, 270); doc.line(125, 270, 185, 270);
   doc.setFontSize(8); doc.text("Firma del técnico", 55, 276, { align: "center" }); doc.text("Firma de quien recibe", 155, 276, { align: "center" });
   savePdf(doc, `Informe-${orderNumber}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+}
+
+export function downloadCompanyDocumentPdf(record = {}, assets = {}, logo, options = {}) {
+  const doc = new jsPDF({ unit: "mm", format: "letter" });
+  const red = [227, 6, 19];
+  const dark = [31, 36, 39];
+  const pageHeight = 279;
+  const addHeader = () => {
+    if (record.usarMembrete !== false) {
+      doc.addImage(logo, "PNG", 16, 12, 62, 10);
+      doc.setTextColor(...dark); doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+      doc.text("CORPORACIÓN THERMAL S. A.  |  Plaza Pericentro, zona 8, Quetzaltenango  |  PBX 7767 5949", 200, 18, { align: "right" });
+      doc.setDrawColor(...red); doc.setLineWidth(0.8); doc.line(16, 29, 200, 29);
+    }
+  };
+  addHeader();
+  doc.setTextColor(...dark); doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+  doc.text(String(record.titulo || record.tipo || "DOCUMENTO").toUpperCase(), 108, 43, { align: "center", maxWidth: 180 });
+  doc.setFontSize(8); doc.text(`${record.numero || "SIN NÚMERO"}  ·  ${prettyDate(record.fecha)}`, 200, 52, { align: "right" });
+  let y = 62;
+  const details = [
+    ["Cliente", record.clienteNombre || "-", "Teléfono", record.clienteTelefono || "-"],
+    ["NIT", record.clienteNit || "-", "Dirección", record.clienteDireccion || "-"],
+    ["Destinatario", record.destinatario || "-", "Entidad / cargo", record.cargoDestinatario || "-"],
+  ];
+  autoTable(doc, { startY: y, margin: { left: 16, right: 16 }, body: details, theme: "grid", styles: { fontSize: 8, cellPadding: 2.2 }, columnStyles: { 0: { cellWidth: 28, fontStyle: "bold", fillColor: [245,245,245] }, 1: { cellWidth: 63.5 }, 2: { cellWidth: 28, fontStyle: "bold", fillColor: [245,245,245] }, 3: { cellWidth: 63 } } });
+  y = doc.lastAutoTable.finalY + 10;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.text(`ASUNTO: ${record.asunto || "-"}`, 16, y);
+  y += 9;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  const paragraphs = String(record.contenido || "").split(/\n+/).filter(Boolean);
+  paragraphs.forEach(paragraph => {
+    const lines = doc.splitTextToSize(paragraph, 184);
+    lines.forEach(line => {
+      if (y > pageHeight - 34) { doc.addPage(); addHeader(); y = record.usarMembrete !== false ? 39 : 20; }
+      doc.text(line, 16, y); y += 5;
+    });
+    y += 3;
+  });
+  if (y > pageHeight - 55) { doc.addPage(); addHeader(); y = record.usarMembrete !== false ? 43 : 24; }
+  const signatureY = Math.max(y + 8, pageHeight - 43);
+  if (record.incluirFirma !== false && assets.firma) doc.addImage(assets.firma, "JPEG", 30, signatureY - 23, 55, 22);
+  if (record.incluirSello !== false && assets.sello) doc.addImage(assets.sello, "JPEG", 130, signatureY - 25, 40, 24);
+  doc.setDrawColor(130); doc.line(25, signatureY, 90, signatureY); doc.line(125, signatureY, 190, signatureY);
+  doc.setFontSize(7.5); doc.text("Firma autorizada", 57.5, signatureY + 5, { align: "center" }); doc.text("Sello de la empresa", 157.5, signatureY + 5, { align: "center" });
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) { doc.setPage(page); doc.setFontSize(6.5); doc.setTextColor(110); doc.text(`${record.numero || "Documento"} · Página ${page} de ${pageCount}`, 200, 273, { align: "right" }); }
+  if (options.save !== false) savePdf(doc, `${record.numero || "Documento"}-${String(record.clienteNombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  return doc;
 }
