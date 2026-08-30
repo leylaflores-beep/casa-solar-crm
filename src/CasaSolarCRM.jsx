@@ -131,7 +131,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v69";
+const CRM_VERSION = "v70";
 const CATALOG_LINK_SECTIONS = ["Calentadores solares", "Iluminación", "Accesorios y otros productos"];
 const RH_SECTION_DEFINITIONS = [
   { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
@@ -170,6 +170,17 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("es-GT", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const seguimientoOrden = (s) => s.fechaHora || `${s.fecha || ""}T00:00:00`;
 const fmtMoney = (n) => new Intl.NumberFormat("es-GT", { style: "currency", currency: "GTQ", maximumFractionDigits: 2 }).format(n || 0);
+const parseMoney = value => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  let text = String(value ?? "").trim().replace(/[^0-9.,-]/g, "");
+  if (!text) return 0;
+  const lastComma = text.lastIndexOf(",");
+  const lastDot = text.lastIndexOf(".");
+  if (lastComma > lastDot) text = text.replace(/\./g, "").replace(",", ".");
+  else text = text.replace(/,/g, "");
+  const number = Number(text);
+  return Number.isFinite(number) ? Math.max(0, number) : 0;
+};
 const canalIcon = (canal) => (CANALES.find(c => c.id === canal) || CANALES[CANALES.length - 1]).icon;
 const productoNombre = (id) => (CATALOGO.find(p => p.id === id) || {}).nombre || id;
 const categoriaProducto = (id) => {
@@ -1188,6 +1199,10 @@ function SeguimientoModal({ contactos, initialContactId, vendedor, onSave, onClo
 
 function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], onClose, onSave, onGenerate, onAdvance, advanceLabel }) {
   const draftKey = `casasolar:draft:orden:${cotizacion.id || cotizacion.numero}`;
+  const quotedItems = (cotizacion.items || []).filter(item => item.productoId !== "transporte_ruta").map(item => ({ ...item, id: item.id || uid() }));
+  const legacyAdvance = parseMoney(cotizacion.ordenPedido?.abono);
+  const legacyPayments = Array.isArray(cotizacion.ordenPedido?.abonos) ? cotizacion.ordenPedido.abonos : [];
+  const safeLegacyPayments = legacyPayments.length ? legacyPayments : (legacyAdvance > 0 && legacyAdvance <= parseMoney(cotizacion.total) ? [{ id: uid(), fecha: cotizacion.ordenPedido?.fechaAnticipo || cotizacion.fecha || todayISO(), monto: legacyAdvance, formaPago: cotizacion.ordenPedido?.formaPago || "Transferencia", referencia: "Abono anterior" }] : []);
   const defaultForm = {
     tipoOrden: "Calentadores",
     tipoEvaluacion: "Visita por llamada", fechaVisitaTecnica: "", horaVisitaTecnica: "", visitaTecnicaProgramada: false, visitaTecnicaProgramadaEn: "",
@@ -1200,7 +1215,10 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     instalacionesAdicionales: "", distanciaAdicional: "",
     bomba: "No", deposito: "Sí", alturaDeposito: "", conectaDeposito: "Sí",
     gradas: "Sí", entraCamion: "Sí", formaPago: "Transferencia",
-    estadoPago: "Pendiente", abono: "", saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
+    estadoPago: "Pendiente", abono: "", abonos: safeLegacyPayments, saldo: String(cotizacion.total || ""), promocion: cotizacion.promocion || "",
+    itemsAutorizados: quotedItems, totalOrden: cotizacion.total || 0,
+    modalidadEntrega: "Instalación", fechaEntrega: "", lugarEntrega: contacto?.direccion || "", ubicacionEntregaUrl: "",
+    facturarDistintoCliente: "No", facturacionNombre: contacto?.nombre || "", facturacionNit: contacto?.nit || "C/F", facturacionDireccion: contacto?.direccion || "", facturacionTelefono: contacto?.telefono || "", facturacionEmail: contacto?.email || "", facturacionTipo: "Persona individual",
     garantia: cotizacion.garantia || "", observaciones: cotizacion.notas || "",
     evidenciasFotograficas: "",
     tipoServicio: "Mantenimiento", equipoExistente: "", fallaReportada: "", servicioRequerido: "", materialesServicio: "",
@@ -1223,6 +1241,15 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
     if (!["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"].includes(draft.medidaTuberiaFria)) draft.medidaTuberiaFria = "PVC 1/2 pulgada";
     return draft;
   });
+  const [paymentDraft, setPaymentDraft] = useState({ fecha: todayISO(), monto: "", formaPago: "Transferencia", referencia: "" });
+  const [newItemId, setNewItemId] = useState("");
+  const orderItems = Array.isArray(form.itemsAutorizados) ? form.itemsAutorizados : quotedItems;
+  const orderTotal = orderItems.reduce((sum, item) => sum + Math.max(0, Number(item.cantidad || 0)) * parseMoney(item.precioUnitario), 0);
+  const payments = Array.isArray(form.abonos) ? form.abonos : [];
+  const totalPaid = payments.reduce((sum, payment) => sum + parseMoney(payment.monto), 0);
+  const balance = Math.max(0, orderTotal - totalPaid);
+  const orderState = balance <= 0 && orderTotal > 0 ? "Cancelado" : totalPaid > 0 ? "Abonado" : "Pendiente";
+  const normalizedForm = () => ({ ...form, itemsAutorizados: orderItems, totalOrden: orderTotal, abonos: payments, abono: totalPaid, saldo: balance, estadoPago: orderState });
   const set = (key, value) => setForm(prev => ({
     ...prev, [key]: value,
     ...(["fechaVisitaTecnica", "horaVisitaTecnica", "tipoEvaluacion"].includes(key) ? { visitaTecnicaProgramada: false, visitaTecnicaProgramadaEn: "" } : {}),
@@ -1232,11 +1259,26 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
   }));
   useEffect(() => { saveDraft(draftKey, form); }, [draftKey, form]);
   const generateOrder = () => {
-    const finalForm = { ...form, ordenFinalGenerada: true, ordenFinalGeneradaEn: new Date().toISOString() };
+    const finalForm = { ...normalizedForm(), ordenFinalGenerada: true, ordenFinalGeneradaEn: new Date().toISOString() };
     clearDraft(draftKey);
     onGenerate(finalForm);
   };
-  const saveOrder = () => { clearDraft(draftKey); onSave?.(form); };
+  const saveOrder = () => { clearDraft(draftKey); onSave?.(normalizedForm()); };
+  const updateOrderItem = (id, changes) => setForm(prev => ({ ...prev, itemsAutorizados: (prev.itemsAutorizados || quotedItems).map(item => item.id === id ? { ...item, ...changes } : item) }));
+  const removeOrderItem = id => setForm(prev => ({ ...prev, itemsAutorizados: (prev.itemsAutorizados || quotedItems).filter(item => item.id !== id) }));
+  const addOrderItem = () => {
+    const product = CATALOGO.find(item => item.id === newItemId);
+    if (!product) return window.alert("Selecciona un producto o servicio.");
+    setForm(prev => ({ ...prev, itemsAutorizados: [...(prev.itemsAutorizados || quotedItems), { id: uid(), productoId: product.id, descripcion: product.nombre, cantidad: 1, precioUnitario: Number(product.precio || 0) }] }));
+    setNewItemId("");
+  };
+  const addPayment = () => {
+    const amount = parseMoney(paymentDraft.monto);
+    if (!paymentDraft.fecha || amount <= 0) return window.alert("Indica la fecha y un abono mayor a Q0.00.");
+    if (amount > balance + 0.009) return window.alert(`El abono no puede ser mayor que el saldo pendiente de ${fmtMoney(balance)}.`);
+    setForm(prev => ({ ...prev, abonos: [...(prev.abonos || []), { ...paymentDraft, id: uid(), monto: amount, registradoPor: currentUser.nombre, registradoEn: new Date().toISOString() }] }));
+    setPaymentDraft({ fecha: todayISO(), monto: "", formaPago: "Transferencia", referencia: "" });
+  };
   const isTechnician = currentUser?.rol === "Técnico";
   const isTechnicalArea = ["Técnico", "Jefe técnico"].includes(currentUser?.rol);
   const canAssignTechnician = currentUser?.rol === "Jefe técnico" || ["leyla.flores@gmail.com", "ligiaeugeniamolina@gmail.com"].includes(String(currentUser?.email || "").toLowerCase());
@@ -1309,6 +1351,12 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
         <div className="modal-body">
           <label className="field-label">Tipo de orden de pedido</label>
           <select className="input order-type-select" value={form.tipoOrden || "Calentadores"} onChange={e => set("tipoOrden", e.target.value)}><option>Calentadores</option><option>Servicios</option><option>Revisión técnica</option><option>Iluminación</option></select>
+          <h4>Productos y servicios autorizados por el cliente</h4>
+          <div className="order-products-editor">
+            {orderItems.length ? orderItems.map(item => <div className="order-product-row" key={item.id}><input className="input" value={item.descripcion || nombreItem(item)} onChange={e => updateOrderItem(item.id, { descripcion: e.target.value })}/><input className="input compact" type="number" min="0.01" step="0.01" value={item.cantidad ?? 1} onChange={e => updateOrderItem(item.id, { cantidad: e.target.value })}/><input className="input compact" type="number" min="0" step="0.01" value={item.precioUnitario ?? 0} onChange={e => updateOrderItem(item.id, { precioUnitario: e.target.value })}/><strong>{fmtMoney(Number(item.cantidad || 0) * parseMoney(item.precioUnitario))}</strong><button type="button" className="icon-btn" onClick={() => removeOrderItem(item.id)} title="Quitar de la OP"><Trash2 size={15}/></button></div>) : <div className="empty-state">Agrega al menos un producto o servicio autorizado.</div>}
+            <div className="order-product-add"><select className="input" value={newItemId} onChange={e => setNewItemId(e.target.value)}><option value="">Seleccionar producto o servicio</option>{CATALOGO.map(product => <option key={product.id} value={product.id}>{product.categoria} · {product.nombre}</option>)}</select><button type="button" className="btn-primary small" onClick={addOrderItem}><Plus size={14}/> Agregar</button></div>
+            <div className="order-total-line"><span>Total autorizado de la OP</span><strong>{fmtMoney(orderTotal)}</strong></div>
+          </div>
           <div className="order-evaluation-summary">
             <div className="order-summary-head"><ClipboardList size={18} /><div><h4>Información para evaluación técnica</h4><p>Datos tomados automáticamente de la cotización.</p></div></div>
             <div className="order-summary-grid">
@@ -1347,15 +1395,17 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
             {form.evaluacionAprobadaCliente !== "Aprobada" && <button type="button" className="btn-primary" onClick={approveEvaluation}><ShieldCheck size={16}/> Registrar aprobación del cliente</button>}
             <div className={`warranty-result ${technicalEvaluationReady ? "ready" : "blocked"}`}>{technicalEvaluationReady ? <><CheckCircle2 size={18}/> LISTA · Ya puede generarse la Orden de Pedido final</> : <><Clock size={18}/> PENDIENTE · Falta realizar o aprobar la evaluación</>}</div>
           </div>
-          <h4>Programación e instalación</h4>
-          <div className="form-grid">{field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field("Dirección de instalación", "direccion")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("DPI / CUI", "dpi")}{field("NIT", "nit")}</div>
+          <h4>Programación, entrega o despacho</h4>
+          <div className="form-grid">{select("Modalidad", "modalidadEntrega", ["Instalación", "Solo despacho", "Servicio en sitio", "Revisión técnica"])}{form.modalidadEntrega === "Solo despacho" ? field("Fecha de entrega", "fechaEntrega", "date") : field("Fecha de instalación", "fechaInstalacion", "date")}{select("Horario", "horario", ["Mañana", "Tarde", "Por confirmar"])}{field(form.modalidadEntrega === "Solo despacho" ? "Lugar de entrega" : "Dirección de instalación", form.modalidadEntrega === "Solo despacho" ? "lugarEntrega" : "direccion")}{form.modalidadEntrega === "Solo despacho" && field("Enlace de ubicación (Google Maps o Waze)", "ubicacionEntregaUrl", "url")}{field("Departamento", "departamento")}{field("Teléfono", "telefono")}{field("DPI / CUI", "dpi")}{field("NIT", "nit")}</div>
+          <h4>Datos de facturación</h4>
+          <div className="form-grid">{select("¿Facturar a nombre distinto del cliente?", "facturarDistintoCliente", ["No", "Sí"])}{select("Tipo", "facturacionTipo", ["Persona individual", "Empresa"])}{field("Nombre o razón social", "facturacionNombre")}{field("NIT de facturación", "facturacionNit")}{field("Dirección fiscal", "facturacionDireccion")}{field("Teléfono de facturación", "facturacionTelefono")}{field("Correo de facturación", "facturacionEmail", "email")}</div>
           <h4>Datos técnicos · {form.tipoOrden || "Calentadores"}</h4>
           {(form.tipoOrden || "Calentadores") === "Calentadores" && <div className="form-grid">{select("Niveles de la casa", "niveles", ["1", "2", "3", "4", "Otro"])}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("Tipo de techo", "tipoTecho", ["", "Plano", "1 agua", "2 aguas", "Varias aguas"])}{select("Tubería de agua caliente", "tuberiaCaliente", ["Sí", "No"])}{select("Medida tubería caliente", "medidaTuberiaCaliente", ["CPVC 1/2 pulgada", "CPVC 3/4 pulgada", "Otra"])}{select("Tubería de agua fría", "tuberiaFria", ["Sí", "No"])}{select("Medida tubería fría", "medidaTuberiaFria", ["PVC 1/2 pulgada", "PVC 3/4 pulgada", "Otra"])}{select("Presión de agua", "presionAgua", ["Baja", "Media", "Alta", "Muy alta"])}{select("¿Tiene otro calentador?", "otroCalentador", ["No", "Sí"])}{field("Detalle del otro calentador", "detalleOtroCalentador")}{select("¿Tiene variación de presión?", "variacionPresion", ["No", "Sí"])}{field("Detalle de la variación", "detalleVariacionPresion")}{field("Instalaciones adicionales", "instalacionesAdicionales")}{field("Distancia adicional (metros)", "distanciaAdicional", "number")}{select("Bomba hidroneumática", "bomba", ["Sí", "No"])}{select("Depósito para agua", "deposito", ["Sí", "No"])}{field("Altura del depósito", "alturaDeposito")}{select("Conecta al depósito", "conectaDeposito", ["Sí", "No"])}{select("Gradas al último nivel", "gradas", ["Sí", "No"])}{select("¿Entra camión a la casa?", "entraCamion", ["Sí", "No"])}</div>}
           {form.tipoOrden === "Servicios" && <div className="form-grid">{select("Tipo de servicio", "tipoServicio", ["Mantenimiento", "Reparación", "Instalación", "Desinstalación", "Otro"])}{field("Equipo existente", "equipoExistente")}{field("Falla reportada", "fallaReportada")}{field("Servicio requerido", "servicioRequerido")}{field("Materiales o repuestos previstos", "materialesServicio")}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
           {form.tipoOrden === "Revisión técnica" && <div className="form-grid">{field("Motivo de la revisión", "motivoRevision")}{field("Equipo o sistema a revisar", "equipoExistente")}{field("Diagnóstico preliminar", "diagnosticoPreliminar")}{field("Mediciones necesarias", "medicionesTecnicas")}{select("Acceso al techo", "accesoTecho", ["Sí", "No", "Por confirmar"])}{field("Riesgos o condiciones especiales", "riesgosDetectados")}</div>}
           {form.tipoOrden === "Iluminación" && <div className="form-grid">{field("Área a iluminar (m²)", "areaIluminar", "number")}{field("Altura de instalación", "alturaInstalacionLuz")}{field("Cantidad de luminarias", "cantidadLuminarias", "number")}{field("Potencia de luminaria (W)", "potenciaLuminaria", "number")}{field("Ubicación del panel solar", "ubicacionPanelSolar")}{field("Horas de iluminación requeridas", "horasIluminacion")}{select("Material del techo", "materialTecho", ["Lámina", "Terraza", "Teja", "Otro"])}{select("¿Entra camión?", "entraCamion", ["Sí", "No"])}</div>}
           <h4>{isTechnicalArea ? "Observaciones técnicas" : "Pago y observaciones"}</h4>
-          {!isTechnicalArea && <><div className="form-grid">{select("Estado del pago", "estadoPago", ["Pendiente", "Abonado", "Cancelado"])}{select("Forma de pago", "formaPago", ["Transferencia", "Contado", "Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque"])}{field("Primer abono (Q)", "abono", "number")}{field("Saldo pendiente (Q)", "saldo", "number")}</div>{form.estadoPago === "Cancelado" && <div className="paid-order-banner"><CheckCircle2 size={18} /> CANCELADO · Cliente pagó el total</div>}<div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
+          {!isTechnicalArea && <><div className="payment-summary"><div><span>Total OP</span><strong>{fmtMoney(orderTotal)}</strong></div><div><span>Total abonado</span><strong>{fmtMoney(totalPaid)}</strong></div><div><span>Saldo</span><strong>{fmtMoney(balance)}</strong></div><div><span>Estado</span><strong>{orderState}</strong></div></div>{legacyAdvance > parseMoney(cotizacion.total) && legacyPayments.length === 0 && <div className="form-warning">Se detectó un abono anterior inválido de {fmtMoney(legacyAdvance)}. No se incluyó en el saldo; registra nuevamente el pago correcto.</div>}<div className="payment-entry form-grid"><div><label className="field-label">Fecha del abono</label><input className="input" type="date" value={paymentDraft.fecha} onChange={e=>setPaymentDraft(p=>({...p,fecha:e.target.value}))}/></div><div><label className="field-label">Monto (Q)</label><input className="input" inputMode="decimal" value={paymentDraft.monto} onChange={e=>setPaymentDraft(p=>({...p,monto:e.target.value}))} placeholder="0.00"/></div><div><label className="field-label">Forma de pago</label><select className="input" value={paymentDraft.formaPago} onChange={e=>setPaymentDraft(p=>({...p,formaPago:e.target.value}))}><option>Transferencia</option><option>Contado</option><option>Tarjeta débito/crédito</option><option>Visa cuotas</option><option>Financiamiento</option><option>Cheque</option></select></div><div><label className="field-label">Referencia</label><input className="input" value={paymentDraft.referencia} onChange={e=>setPaymentDraft(p=>({...p,referencia:e.target.value}))}/></div></div><button type="button" className="btn-primary small" onClick={addPayment}><Plus size={14}/> Registrar abono</button>{payments.length > 0 && <div className="payment-history">{payments.map(payment=><div className="mini-row" key={payment.id}><span>{fmtDate(payment.fecha)}</span><strong>{fmtMoney(parseMoney(payment.monto))}</strong><span>{payment.formaPago}</span><span>{payment.referencia || "Sin referencia"}</span><button type="button" className="icon-btn" onClick={()=>setForm(prev=>({...prev,abonos:(prev.abonos||[]).filter(item=>item.id!==payment.id)}))}><Trash2 size={14}/></button></div>)}</div>}{orderState === "Cancelado" && <div className="paid-order-banner"><CheckCircle2 size={18} /> CANCELADO · Cliente pagó el total</div>}<div className="form-grid">{field("Promoción aplicada", "promocion")}{field("Garantía ofrecida", "garantia")}</div></>}
           <h4>Estado de la orden</h4>
           <div className="form-grid order-status-grid">
             <div><label className="field-label">Pago del cliente</label><div className={`order-status-box ${form.estadoPago === "Cancelado" ? "done" : ""}`}>{form.estadoPago === "Cancelado" ? "Cancelado (pagado)" : form.estadoPago || "Pendiente"}</div></div>
@@ -1398,7 +1448,7 @@ function OrderFormModal({ cotizacion, contacto, currentUser, vendedores = [], on
           <textarea className="input" rows={3} value={form.evidenciasFotograficas || ""} onChange={e => set("evidenciasFotograficas", e.target.value)} placeholder="Pega un enlace compartido por línea" />
           {String(form.evidenciasFotograficas || "").split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).length > 0 && <div className="photo-links">{String(form.evidenciasFotograficas).split(/\n+/).filter(link => /^https?:\/\//i.test(link.trim())).map((link, index) => <a key={`${link}-${index}`} href={link.trim()} target="_blank" rel="noreferrer"><Camera size={14} /> Abrir evidencia {index + 1}</a>)}</div>}
         </div>
-        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && <button className="btn-primary" onClick={generateOrder}><Download size={16} /> Generar orden de pedido</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(form)}><Send size={16} /> {advanceLabel}</button>}</div>
+        <div className="modal-foot"><button className="btn-ghost" onClick={onClose}>Cerrar</button>{onSave && <button className="btn-primary" onClick={saveOrder}><CheckCircle2 size={16} /> Guardar registro</button>}{onGenerate && <button className="btn-primary" onClick={generateOrder} disabled={orderItems.length === 0}><Download size={16} /> Generar orden de pedido</button>}{onAdvance && <button className="btn-primary" onClick={() => onAdvance(normalizedForm())}><Send size={16} /> {advanceLabel}</button>}</div>
       </div>
     </div>
   );
@@ -2248,7 +2298,7 @@ function OperationsView({ mode, cotizaciones, contactos, currentUser, onUpdate }
     return <div><div className="page-head"><h2>Programación</h2><p>Órdenes organizadas por fecha programada.</p></div><div className="section-card"><h3>Pendientes sin fecha ({pending.length})</h3>{pending.length ? <table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(pending)}</tbody></table> : <div className="empty-state">No hay órdenes pendientes.</div>}</div><div className="section-card"><h3>Órdenes programadas</h3><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Tipo</th><th>Fecha</th><th>Horario</th><th>Técnico</th></tr></thead><tbody>{rows(scheduled)}</tbody></table></div></div>;
   }
   if (mode === "bodega") return <div><div className="page-head"><h2>Bodega</h2><p>Equipos, accesorios y productos preparados para cada cliente y técnico.</p></div><div className="warehouse-orders">{orders.sort((a,b)=>(a.ordenPedido.fechaInstalacion||"9999").localeCompare(b.ordenPedido.fechaInstalacion||"9999")).map(q => { const extras=q.ordenPedido.despachoExtras||[]; const draft=warehouseDrafts[q.id]||{nombre:"",cantidad:1}; return <div className="section-card" key={q.id}><div className="section-title"><Package size={18}/><div><h3>{q.ordenNumero || q.numero.replace("CS-","OP-")} · {contactName(q)}</h3><p>{q.ordenPedido.fechaInstalacion ? fmtDate(q.ordenPedido.fechaInstalacion) : "Fecha pendiente"} · Vendedor: {q.vendedor}</p></div></div><div className="form-grid"><label><span className="field-label">Técnico que recibe</span><input className="input" value={q.ordenPedido.tecnicoDespachoNombre||q.ordenPedido.tecnicoAsignadoNombre||""} onChange={e=>updateOrder(q,{tecnicoDespachoNombre:e.target.value},"Técnico de despacho actualizado")} placeholder="Nombre del técnico"/></label><label><span className="field-label">Estado</span><select className="input" value={q.ordenPedido.estadoBodega || "Pendiente"} onChange={e=>updateOrder(q,{estadoBodega:e.target.value},`Bodega: ${e.target.value}`)}><option>Pendiente</option><option>En preparación</option><option>Listo para despacho</option><option>Despachado</option></select></label></div><h4>Productos cotizados</h4><div className="privacy-note">{q.items.filter(i=>i.productoId!=="transporte_ruta").map(i=>`${i.cantidad} × ${nombreItem(i)}`).join(", ")||"Sin productos"}</div><h4>Accesorios u objetos adicionales</h4>{extras.map(item=><div className="mini-row" key={item.id}><span><strong>{item.cantidad} × {item.nombre}</strong></span><button className="icon-btn" onClick={()=>updateOrder(q,{despachoExtras:extras.filter(extra=>extra.id!==item.id)},`Bodega quitó ${item.nombre}`)}><Trash2 size={14}/></button></div>)}<div className="item-row"><input className="input" value={draft.nombre} onChange={e=>setWarehouseDrafts(all=>({...all,[q.id]:{...draft,nombre:e.target.value}}))} placeholder="Accesorio, herramienta, repuesto u objeto"/><input className="input compact" type="number" min="1" value={draft.cantidad} onChange={e=>setWarehouseDrafts(all=>({...all,[q.id]:{...draft,cantidad:e.target.value}}))}/><button className="btn-primary small" onClick={()=>{if(!draft.nombre.trim())return;updateOrder(q,{despachoExtras:[...extras,{id:uid(),nombre:draft.nombre.trim(),cantidad:Number(draft.cantidad)||1}]},`Bodega agregó ${draft.nombre}`);setWarehouseDrafts(all=>({...all,[q.id]:{nombre:"",cantidad:1}}));}}><Plus size={14}/> Agregar</button></div></div>;})}</div></div>;
-  return <div><div className="page-head"><h2>Facturación</h2><p>Facturas que deben generarse para los clientes.</p></div><div className="section-card"><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>NIT</th><th>Total</th><th>Pago</th><th>Factura</th><th>Número</th></tr></thead><tbody>{orders.map(q => { const c=contactos.find(x=>x.id===q.contactoId)||q.cliente||{}; return <tr key={q.id}><td>{q.ordenNumero||q.numero.replace("CS-","OP-")}</td><td>{c.nombre||q.contactoNombre}</td><td>{c.nit||q.ordenPedido.nit||"C/F"}</td><td>{fmtMoney(q.total)}</td><td>{q.ordenPedido.estadoPago||"Pendiente"}</td><td><select className="input compact" value={q.ordenPedido.estadoFactura||"Pendiente"} onChange={e=>updateOrder(q,{estadoFactura:e.target.value},`Facturación: ${e.target.value}`)}><option>Pendiente</option><option>En proceso</option><option>Generada</option><option>Enviada al cliente</option></select></td><td><input className="input compact" value={q.ordenPedido.numeroFactura||""} onChange={e=>updateOrder(q,{numeroFactura:e.target.value},"Número de factura actualizado")} placeholder="Serie / número" /></td></tr>;})}</tbody></table></div></div>;
+  return <div><div className="page-head"><h2>Facturación</h2><p>Facturas que deben generarse para los clientes o empresas indicados en cada OP.</p></div><div className="section-card"><table className="table"><thead><tr><th>Orden</th><th>Cliente</th><th>Facturar a</th><th>NIT</th><th>Total OP</th><th>Pago</th><th>Factura</th><th>Número</th></tr></thead><tbody>{orders.map(q => { const c=contactos.find(x=>x.id===q.contactoId)||q.cliente||{}; const o=q.ordenPedido||{}; return <tr key={q.id}><td>{q.ordenNumero||q.numero.replace("CS-","OP-")}</td><td>{c.nombre||q.contactoNombre}</td><td>{o.facturacionNombre||c.nombre||q.contactoNombre}</td><td>{o.facturacionNit||c.nit||o.nit||"C/F"}</td><td>{fmtMoney(o.totalOrden??q.total)}</td><td>{o.estadoPago||"Pendiente"}<small className="table-note">Abonado {fmtMoney(o.abono)} · Saldo {fmtMoney(o.saldo??q.total)}</small></td><td><select className="input compact" value={o.estadoFactura||"Pendiente"} onChange={e=>updateOrder(q,{estadoFactura:e.target.value},`Facturación: ${e.target.value}`)}><option>Pendiente</option><option>En proceso</option><option>Generada</option><option>Enviada al cliente</option></select></td><td><input className="input compact" value={o.numeroFactura||""} onChange={e=>updateOrder(q,{numeroFactura:e.target.value},"Número de factura actualizado")} placeholder="Serie / número" /></td></tr>;})}</tbody></table></div></div>;
 }
 
 function PlanningView({ cotizaciones, contactos, currentUser, onUpdate }) {
@@ -2676,7 +2726,7 @@ export default function CasaSolarCRM() {
         descuentoAutorizadoFecha: discount.autorizadoEn,
         totalAntesDescuento: updated.totalOriginal,
         totalConDescuento: updated.total,
-        saldo: updated.ordenPedido.estadoPago === "Cancelado" ? "0" : String(Math.max(0, Number(updated.total || 0) - Number(updated.ordenPedido.abono || 0))),
+        saldo: updated.ordenPedido.estadoPago === "Cancelado" ? 0 : Math.max(0, Number(updated.ordenPedido.totalOrden ?? updated.total ?? 0) - parseMoney(updated.ordenPedido.abono)),
       } : updated.ordenPedido;
     const saleDate = updated.estado === "Aceptada"
       ? (updated.fechaVenta || previousQuote?.fechaVenta || todayISO())

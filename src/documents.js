@@ -164,19 +164,23 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   section(12, 41, 92, "PROGRAMACIÓN");
   lineField("Fecha de pedido", prettyDate(quote.fecha), 15, 53, 86);
   lineField("Asesor de ventas", quote.vendedor, 15, 63, 86);
-  lineField("Fecha instalación", order.fechaInstalacion ? prettyDate(order.fechaInstalacion) : "Por confirmar", 15, 73, 86);
+  lineField(order.modalidadEntrega === "Solo despacho" ? "Fecha de entrega" : "Fecha instalación", (order.modalidadEntrega === "Solo despacho" ? order.fechaEntrega : order.fechaInstalacion) ? prettyDate(order.modalidadEntrega === "Solo despacho" ? order.fechaEntrega : order.fechaInstalacion) : "Por confirmar", 15, 73, 86);
   lineField("Horario", order.horario || "Por confirmar", 15, 83, 86);
 
   section(108, 41, 96, "DATOS DEL CLIENTE");
   lineField("Nombre", client.nombre, 111, 53, 90);
-  lineField("Dirección", order.direccion || client.direccion, 111, 63, 90);
+  lineField(order.modalidadEntrega === "Solo despacho" ? "Lugar entrega" : "Dirección", order.modalidadEntrega === "Solo despacho" ? (order.lugarEntrega || client.direccion) : (order.direccion || client.direccion), 111, 63, 90);
   lineField("Departamento", order.departamento || client.departamento, 111, 73, 90);
   lineField("Teléfono", order.telefono || client.telefono, 111, 83, 90);
   lineField("NIT", order.nit || client.nit, 111, 93, 90);
   lineField("DPI / CUI", order.dpi || client.dpi, 111, 99, 90);
+  if (order.modalidadEntrega === "Solo despacho" && /^https?:\/\//i.test(order.ubicacionEntregaUrl || "")) {
+    doc.link(138, 57, 63, 8, { url: order.ubicacionEntregaUrl });
+  }
 
   section(12, 93, 92, "DESCRIPCIÓN DEL PRODUCTO");
-  const orderItems = quote.items.slice(0, 16).map(item => [
+  const authorizedItems = Array.isArray(order.itemsAutorizados) ? order.itemsAutorizados : quote.items;
+  const orderItems = authorizedItems.filter(item => item.productoId !== "transporte_ruta").slice(0, 16).map(item => [
     itemDescription(item),
     item.cantidad,
     money(item.precioUnitario),
@@ -191,19 +195,19 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   });
   const tableEnd = doc.lastAutoTable.finalY;
   doc.setFont("helvetica", "bold"); doc.setFontSize(7);
-  if (quote.descuentoAutorizado) {
+  if (quote.descuentoAutorizado && !Array.isArray(order.itemsAutorizados)) {
     doc.text(`Total original: ${money(quote.totalOriginal)}`, 101, tableEnd + 5, { align: "right" });
     doc.text(`Descuento autorizado: -${money(quote.descuentoAutorizado.monto)}`, 101, tableEnd + 10, { align: "right" });
     doc.text(`TOTAL AUTORIZADO: ${money(quote.total)}`, 101, tableEnd + 15, { align: "right" });
-  } else doc.text(`TOTAL: ${money(quote.total)}`, 101, tableEnd + 6, { align: "right" });
+  } else doc.text(`TOTAL OP: ${money(order.totalOrden ?? quote.total)}`, 101, tableEnd + 6, { align: "right" });
 
   section(108, 103, 96, "DATOS DE FACTURACIÓN");
-  lineField("Nombre", client.nombre, 111, 115, 90);
-  lineField("Dirección", order.direccion || client.direccion, 111, 125, 90);
-  lineField("Departamento", order.departamento || client.departamento, 111, 135, 90);
-  lineField("Teléfono", order.telefono || client.telefono, 111, 145, 90);
-  lineField("NIT", order.nit || client.nit, 111, 155, 90);
-  lineField("DPI / CUI", order.dpi || client.dpi, 111, 161, 90);
+  lineField("Nombre / razón", order.facturacionNombre || client.nombre, 111, 115, 90);
+  lineField("Dirección fiscal", order.facturacionDireccion || client.direccion, 111, 125, 90);
+  lineField("Tipo", order.facturacionTipo || "Persona individual", 111, 135, 90);
+  lineField("Teléfono", order.facturacionTelefono || client.telefono, 111, 145, 90);
+  lineField("NIT", order.facturacionNit || client.nit, 111, 155, 90);
+  lineField("Correo", order.facturacionEmail || client.email, 111, 161, 90);
 
   section(108, 164, 96, "DATOS TÉCNICOS");
   const technicalByType = {
@@ -251,13 +255,22 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   });
 
   section(12, 222, 92, "ABONOS");
-  const payments = [[prettyDate(quote.fecha), order.abono ? money(order.abono) : "", order.saldo ? money(order.saldo) : ""], ...Array.from({ length: 5 }, () => ["", "", ""])];
+  const totalOrder = Number(order.totalOrden ?? quote.total ?? 0);
+  let runningPaid = 0;
+  const paymentRecords = Array.isArray(order.abonos) ? order.abonos.slice(0, 6) : [];
+  const payments = paymentRecords.map(payment => {
+    runningPaid += Number(payment.monto || 0);
+    return [prettyDate(payment.fecha), money(payment.monto), money(Math.max(0, totalOrder - runningPaid))];
+  });
+  while (payments.length < 6) payments.push(["", "", ""]);
   autoTable(doc, { startY: 229, margin: { left: 12, right: 112 }, head: [["Fecha", "Abono (Q)", "Saldo (Q)"]], body: payments, theme: "grid", styles: { fontSize: 6, minCellHeight: 7 }, headStyles: { fillColor: [235,235,235], textColor: black } });
 
   section(108, 250, 96, "FORMA DE PAGO");
   doc.setFontSize(6.5); doc.setFont("helvetica", "normal");
   const paymentMethods = ["Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque", "Contado", "Transferencia"];
-  paymentMethods.forEach((p, i) => doc.text(`${p === order.formaPago ? "[X]" : "[ ]"} ${p}${p === order.formaPago ? `  Abono ${money(order.abono)}  Saldo ${money(order.saldo)}` : ""}`, 112, 262 + i * 8));
+  const usedMethods = new Set(paymentRecords.map(payment => payment.formaPago));
+  paymentMethods.forEach((p, i) => doc.text(`${usedMethods.has(p) ? "[X]" : "[ ]"} ${p}`, 112, 262 + i * 8));
+  doc.setFont("helvetica", "bold"); doc.text(`Abonado ${money(order.abono)} · Saldo ${money(order.saldo)}`, 112, 307);
 
   section(12, 286, 92, "PROMOCIÓN / GARANTÍA / OBSERVACIONES");
   doc.setDrawColor(160); doc.rect(12, 293, 92, 23);
