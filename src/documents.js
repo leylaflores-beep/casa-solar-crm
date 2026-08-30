@@ -135,7 +135,7 @@ export function downloadQuotePdf(quote, contact, logo, options = {}) {
   return doc;
 }
 
-export function downloadOrderPdf(quote, contact, logo, order = {}) {
+export function downloadOrderPdf(quote, contact, logo, order = {}, options = {}) {
   const doc = new jsPDF({ unit: "mm", format: [216, 330] });
   const client = contact || quote.cliente || {};
   const black = [20, 20, 20];
@@ -187,7 +187,7 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   ]);
   while (orderItems.length < 16) orderItems.push(["", "", ""]);
   autoTable(doc, {
-    startY: 100, margin: { left: 12, right: 112 },
+    startY: 102, margin: { left: 12, right: 112 },
     head: [["Producto / servicio", "Cant.", "Precio (Q)"]], body: orderItems,
     theme: "grid", styles: { fontSize: 6, cellPadding: 1.15, minCellHeight: 6 },
     headStyles: { fillColor: [235, 235, 235], textColor: black },
@@ -245,7 +245,10 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
     `Gradas al último nivel: ${order.gradas || "Sin indicar"}`,
     `¿Entra camión a la casa?: ${order.entraCamion || "Sin indicar"}`,
   ];
-  const technical = technicalByType[order.tipoOrden] || heaterTechnical;
+  const transportText = `Transporte: ${order.formaTransporte || "Por definir"}${order.vehiculoTransporte ? ` / ${order.vehiculoTransporte}` : ""}${order.empresaEnvio ? ` / ${order.empresaEnvio}` : ""}${order.numeroGuia ? ` / Guía ${order.numeroGuia}` : ""}`;
+  const technical = order.modalidadEntrega === "Solo despacho"
+    ? ["SOLO ENTREGA: no requiere llenar condiciones técnicas de instalación.", transportText, `Estado Bodega: ${order.estadoBodega || "Pendiente"}`, `Estado envío: ${order.estadoInstalacion || "Pendiente"}`]
+    : [...(technicalByType[order.tipoOrden] || heaterTechnical), transportText];
   doc.setFont("helvetica", "normal"); doc.setFontSize(5.7);
   let technicalY = 173;
   technical.forEach(text => {
@@ -263,14 +266,17 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
     return [prettyDate(payment.fecha), money(payment.monto), money(Math.max(0, totalOrder - runningPaid))];
   });
   while (payments.length < 6) payments.push(["", "", ""]);
-  autoTable(doc, { startY: 229, margin: { left: 12, right: 112 }, head: [["Fecha", "Abono (Q)", "Saldo (Q)"]], body: payments, theme: "grid", styles: { fontSize: 6, minCellHeight: 7 }, headStyles: { fillColor: [235,235,235], textColor: black } });
+  autoTable(doc, { startY: 231, margin: { left: 12, right: 112 }, head: [["Fecha", "Abono (Q)", "Saldo (Q)"]], body: payments, theme: "grid", styles: { fontSize: 6, minCellHeight: 7 }, headStyles: { fillColor: [235,235,235], textColor: black } });
 
-  section(108, 250, 96, "FORMA DE PAGO");
-  doc.setFontSize(6.5); doc.setFont("helvetica", "normal");
-  const paymentMethods = ["Tarjeta débito/crédito", "Visa cuotas", "Financiamiento", "Cheque", "Contado", "Transferencia"];
-  const usedMethods = new Set(paymentRecords.map(payment => payment.formaPago));
-  paymentMethods.forEach((p, i) => doc.text(`${usedMethods.has(p) ? "[X]" : "[ ]"} ${p}`, 112, 262 + i * 8));
-  doc.setFont("helvetica", "bold"); doc.text(`Abonado ${money(order.abono)} · Saldo ${money(order.saldo)}`, 112, 307);
+  section(108, 250, 96, "PAGOS REGISTRADOS");
+  let rightPaid = 0;
+  const detailedPayments = paymentRecords.slice(0, 4).map(payment => {
+    rightPaid += Number(payment.monto || 0);
+    return [payment.formaPago || "Sin indicar", money(payment.monto), money(Math.max(0, totalOrder - rightPaid)), payment.referencia || "—"];
+  });
+  while (detailedPayments.length < 4) detailedPayments.push(["", "", "", ""]);
+  autoTable(doc, { startY: 259, margin: { left: 108, right: 12 }, head: [["Tipo", "Abono", "Saldo", "Referencia"]], body: detailedPayments, theme: "grid", styles: { fontSize: 5.3, cellPadding: 1, minCellHeight: 8, overflow: "linebreak" }, headStyles: { fillColor: [235,235,235], textColor: black }, columnStyles: { 0:{cellWidth:25},1:{cellWidth:20,halign:"right"},2:{cellWidth:20,halign:"right"},3:{cellWidth:31} } });
+  doc.setFontSize(6.2); doc.setFont("helvetica", "bold"); doc.text(`Total abonado ${money(order.abono)} · Saldo pendiente ${money(order.saldo)}`, 202, 303, { align: "right" });
 
   section(12, 286, 92, "PROMOCIÓN / GARANTÍA / OBSERVACIONES");
   doc.setDrawColor(160); doc.rect(12, 293, 92, 23);
@@ -286,7 +292,8 @@ export function downloadOrderPdf(quote, contact, logo, order = {}) {
   doc.setFontSize(5.5); doc.text("Los pagos realizados no son reembolsables. Equipo sujeto a disponibilidad. Cambios de instalación pueden generar costos adicionales.", 108, 309, { maxWidth: 94 });
   doc.line(18, 322, 65, 322); doc.line(84, 322, 131, 322); doc.line(150, 322, 198, 322);
   doc.setFontSize(6); doc.text("Firma del cliente", 41, 326, { align: "center" }); doc.text("Firma del asesor", 107, 326, { align: "center" }); doc.text("Firma de Operaciones", 174, 326, { align: "center" });
-  savePdf(doc, `${orderNumber}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  if (options.save !== false) savePdf(doc, `${orderNumber}-${(client.nombre || "cliente").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  return doc;
 }
 
 export function downloadInstallationReportPdf(quote, contact, logo, order = {}) {
