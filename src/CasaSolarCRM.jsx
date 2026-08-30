@@ -116,13 +116,19 @@ const BASE_CATALOGO = [
   { id: "instalacion_calentador_otra_marca", nombre: "Instalación de calentador solar de otra marca", categoria: "Servicio" },
   { id: "visita_revision", nombre: "Visita técnica de revisión", categoria: "Visita" },
   { id: "visita_correctiva", nombre: "Visita técnica correctiva", categoria: "Visita" },
+  { id: "visita_iluminacion", nombre: "Visita técnica para iluminación", categoria: "Visita" },
+  { id: "visita_fotovoltaico", nombre: "Visita técnica para sistema fotovoltaico", categoria: "Visita" },
   { id: "accesorios", nombre: "Accesorios", categoria: "Producto" },
   { id: "kit", nombre: "Kit", categoria: "Producto" },
   { id: "estructura_nivelacion", nombre: "Estructura de nivelación", categoria: "Estructura" },
   { id: "estructura_elevacion", nombre: "Estructura de elevación", categoria: "Estructura" },
   { id: "estructura_deposito", nombre: "Estructura para depósito de agua", categoria: "Estructura" },
 ];
-const CATALOGO = [...BASE_CATALOGO, ...KARDEX_CATALOG];
+// El Kardex puede contener nombres que ya existen en el catálogo base. Se conserva
+// una sola opción por nombre para evitar que el vendedor cotice el mismo concepto
+// desde dos filas visualmente idénticas.
+const catalogKey = item => String(item?.nombre || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const CATALOGO = [...[...BASE_CATALOGO, ...KARDEX_CATALOG].filter(item => item?.id && item?.nombre).reduce((catalog, item) => catalog.has(catalogKey(item)) ? catalog : catalog.set(catalogKey(item), item), new Map()).values()];
 const CATALOGO_CATEGORIAS = ["Todas", ...new Set(CATALOGO.map(item => item.categoria))];
 
 const CANALES = [
@@ -139,7 +145,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v72";
+const CRM_VERSION = "v74";
 const CATALOG_LINK_SECTIONS = ["Calentadores solares", "Iluminación", "Accesorios y otros productos"];
 const RH_SECTION_DEFINITIONS = [
   { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
@@ -198,10 +204,10 @@ const categoriaProducto = (id) => {
   if (["alumbrado_publico", "iluminacion_jardin"].includes(id)) return "Iluminación";
   if (["mantenimiento", "correctivo"].includes(id)) return "Servicios";
   if (["proyecto_aislado", "proyecto_red"].includes(id)) return "Proyectos";
-  if (["visita_revision", "visita_correctiva"].includes(id)) return "Visitas";
+  if (["visita_revision", "visita_correctiva", "visita_iluminacion", "visita_fotovoltaico"].includes(id)) return "Visitas";
   if (String(id || "").startsWith("estructura_")) return "Estructuras";
   const catalogCategory = CATALOGO.find(item => item.id === id)?.categoria;
-  if (catalogCategory) return catalogCategory === "Servicio" ? "Servicios" : catalogCategory;
+  if (catalogCategory) return catalogCategory === "Servicio" ? "Servicios" : catalogCategory === "Visita" ? "Visitas" : catalogCategory === "Estructura" ? "Estructuras" : catalogCategory;
   return "Otros";
 };
 const CATEGORIAS_PRODUCTO = ["Calentadores", "Accesorios", "Iluminación", "Fotovoltaico", "Grifería", "Kits", "Servicios", "Proyectos", "Visitas", "Estructuras", "Otros"];
@@ -975,7 +981,10 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
   const [items, setItems] = useState(() => (savedDraft.items || initial?.items || []).map(item => ({ ...item, id: item.id || uid() })));
   const [prod, setProd] = useState(savedDraft.prod || CATALOGO[0].id);
   const [categoria, setCategoria] = useState(savedDraft.categoria || categoriaProducto(savedDraft.prod || CATALOGO[0].id));
-  const [descripcion, setDescripcion] = useState(savedDraft.descripcion || CATALOGO[0].nombre);
+  const [descripcion, setDescripcion] = useState(() => {
+    const savedDescription = String(savedDraft.descripcion || "").trim();
+    return savedDescription.toLowerCase() === productoNombre(savedDraft.prod || CATALOGO[0].id).toLowerCase() ? "" : savedDescription;
+  });
   const [tamano, setTamano] = useState(savedDraft.tamano || "");
   const [altura, setAltura] = useState(savedDraft.altura || "");
   const [compatibilidad, setCompatibilidad] = useState(savedDraft.compatibilidad || "");
@@ -1042,13 +1051,14 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
       : [...items, nextItem];
     setItems(nextItems);
     setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
-    setDescripcion(productoNombre(prod)); setEditingItemId(null);
+    setDescripcion(""); setEditingItemId(null);
     setItemMessage(wasEditing ? "Producto actualizado en el borrador. Pulsa “Guardar cambios” para enviarlo a Firebase." : "Producto agregado a la cotización.");
   };
 
   const editItem = (item) => {
     setEditingItemId(item.id); setProd(item.productoId || CATALOGO[0].id); setCategoria(item.categoria || categoriaProducto(item.productoId));
-    setDescripcion(nombreItem(item));
+    const savedDescription = String(item.descripcion || "").trim();
+    setDescripcion(savedDescription.toLowerCase() === productoNombre(item.productoId).toLowerCase() ? "" : savedDescription);
     setTamano(item.tamano || ""); setCant(item.cantidad || 1);
     setAltura(item.altura || ""); setCompatibilidad(item.compatibilidad || "");
     setPrecioLista(item.precioLista ?? item.precioUnitario ?? ""); setPrecio(item.precioUnitario ?? item.precio ?? "");
@@ -1057,7 +1067,7 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
   };
   const cancelItemEdit = () => {
     setEditingItemId(null); setPrecio(""); setPrecioLista(""); setTamano(""); setAltura(""); setCompatibilidad(""); setCant(1);
-    setDescripcion(productoNombre(prod)); setItemMessage("");
+    setDescripcion(""); setItemMessage("");
   };
   const addPendingTransport = () => {
     if (!pendingTransport) return;
@@ -1100,17 +1110,17 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
           {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Modifica únicamente este producto y pulsa <strong>Actualizar producto</strong>. Después podrás seguir editando la cotización.</span></div>}
           <div className="catalog-picker"><select className="input" value={productCategory} onChange={e=>setProductCategory(e.target.value)}>{CATALOGO_CATEGORIAS.map(category=><option key={category}>{category}</option>)}</select><input className="input" value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="Buscar en Kardex por nombre…"/></div>
           <div className="item-row quote-item-grid">
-            <select className="input" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(productoNombre(next)); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
+            <select className="input" aria-label="Producto del Kardex" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(""); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {!visibleProducts.some(item=>item.id===prod) && CATALOGO.find(item=>item.id===prod) && <option value={prod}>{productoNombre(prod)}</option>}{visibleProducts.map(p => <option key={p.id} value={p.id}>{p.categoria} · {p.nombre}</option>)}
             </select>
-            <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Descripción específica" />
+            <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Detalle adicional (opcional)" />
             <input className="input" value={tamano} onChange={e => setTamano(e.target.value)} placeholder="Tamaño (ej. 25 tubos / 300 L)" />
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
             <button type="button" disabled={saving} className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{saving ? "Guardando…" : editingItemId ? <><CheckCircle2 size={14} /> Actualizar producto</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
-          <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>Escribe en “Descripción específica” el nombre exacto del producto; así aparecerá individualmente en el reporte.</p></div>
+          <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>El nombre se toma una sola vez del Kardex. Utiliza “Detalle adicional” únicamente para indicar modelo, marca o característica especial.</p></div>
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
           {editingItemId && <button type="button" className="btn-ghost small cancel-item-edit" onClick={cancelItemEdit}><X size={14}/> Cancelar edición</button>}
           {itemMessage && <p className={itemMessage.startsWith("Escribe") ? "form-error" : "form-success"}>{itemMessage}</p>}
