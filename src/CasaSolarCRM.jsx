@@ -123,11 +123,13 @@ const BASE_CATALOGO = [
   { id: "estructura_nivelacion", nombre: "Estructura de nivelación", categoria: "Estructura" },
   { id: "estructura_elevacion", nombre: "Estructura de elevación", categoria: "Estructura" },
   { id: "estructura_deposito", nombre: "Estructura para depósito de agua", categoria: "Estructura" },
+  { id: "producto_libre", nombre: "Producto libre / no registrado", categoria: "Libre" },
 ];
 // El Kardex puede contener nombres que ya existen en el catálogo base. Se conserva
 // una sola opción por nombre para evitar que el vendedor cotice el mismo concepto
 // desde dos filas visualmente idénticas.
 const catalogKey = item => String(item?.nombre || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const catalogSearchText = item => normalizeIdentity([item?.nombre, item?.categoria, item?.subcategoria, item?.codigo, item?.sku, item?.modelo].filter(Boolean).join(" "));
 const CATALOGO = [...[...BASE_CATALOGO, ...KARDEX_CATALOG].filter(item => item?.id && item?.nombre).reduce((catalog, item) => catalog.has(catalogKey(item)) ? catalog : catalog.set(catalogKey(item), item), new Map()).values()];
 const CATALOGO_CATEGORIAS = ["Todas", ...new Set(CATALOGO.map(item => item.categoria))];
 
@@ -145,7 +147,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v74";
+const CRM_VERSION = "v75";
 const CATALOG_LINK_SECTIONS = ["Calentadores solares", "Iluminación", "Accesorios y otros productos"];
 const RH_SECTION_DEFINITIONS = [
   { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
@@ -198,6 +200,7 @@ const parseMoney = value => {
 const canalIcon = (canal) => (CANALES.find(c => c.id === canal) || CANALES[CANALES.length - 1]).icon;
 const productoNombre = (id) => (CATALOGO.find(p => p.id === id) || {}).nombre || id;
 const categoriaProducto = (id) => {
+  if (id === "producto_libre") return "Otros";
   if (id === "calentadores") return "Calentadores";
   if (id === "accesorios") return "Accesorios";
   if (id === "kit") return "Kits";
@@ -413,6 +416,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [attachedMessage, setAttachedMessage] = useState("");
   const [pendingSaved, setPendingSaved] = useState(false);
+  const [attachingTransport, setAttachingTransport] = useState(false);
   const [verifiedKm, setVerifiedKm] = useState("");
   const visibleQuotes = cotizaciones.filter(item => canSeeQuote(item, currentUser));
   const municipalityKey = `${normalizeIdentity(address.departamento)}|${normalizeIdentity(address.municipio)}`;
@@ -472,27 +476,39 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
     ruta: { origen: WAREHOUSES[warehouse].address, destino: result.target.name, direccionIngresada: fullDestination, referencia: address.referencia, kilometros: billableKm, distanciaCalculada: result.oneWayKm, distanciaVerificadaGoogle: Number(verifiedKm) || null, idaYRegreso: true, tarifaKm: TRANSPORT_RATE, tarifaIncluyeRegreso: true },
   });
 
-  const attachTransport = () => {
+  const attachTransport = async () => {
     if (!result || !selectedQuoteId) return;
     const quote = cotizaciones.find(item => item.id === selectedQuoteId);
     if (!quote) return setAttachedMessage("No encontramos la cotización seleccionada.");
-    const transportItem = transportFromResult();
-    const items = [...(quote.items || []), transportItem];
-    const total = items.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
-    const updated = { ...quote, items, total };
-    if (quote.descuentoAutorizado) {
-      updated.totalOriginal = total;
-      updated.descuentoAutorizado = null;
-      updated.descuentoSolicitud = null;
-      updated.descuentoHistorial = [...(quote.descuentoHistorial || []), { accion: "Invalidado al agregar transporte", fecha: new Date().toISOString(), usuario: currentUser.nombre, email: currentUser.email || "" }];
+    try {
+      setAttachingTransport(true);
+      setAttachedMessage("");
+      const transportItem = transportFromResult();
+      const items = [...(quote.items || []).filter(item => item.productoId !== "transporte_ruta"), transportItem];
+      const total = items.reduce((sum, item) => sum + Number(item.cantidad || 0) * Number(item.precioUnitario || 0), 0);
+      const updated = { ...quote, items, total };
+      if (quote.descuentoAutorizado) {
+        updated.totalOriginal = total;
+        updated.descuentoAutorizado = null;
+        updated.descuentoSolicitud = null;
+        updated.descuentoHistorial = [...(quote.descuentoHistorial || []), { accion: "Invalidado al agregar transporte", fecha: new Date().toISOString(), usuario: currentUser.nombre, email: currentUser.email || "" }];
+      }
+      await onUpdateCotizacion(updated);
+      setAttachedMessage(`Transporte guardado correctamente en ${quote.numero || "la cotización"}.`);
+      setSelectedQuoteId("");
+    } catch (saveError) {
+      console.error("No se pudo agregar el transporte:", saveError);
+      setAttachedMessage("No se pudo guardar el transporte. La cotización no fue modificada; revisa la conexión e inténtalo otra vez.");
+    } finally {
+      setAttachingTransport(false);
     }
-    onUpdateCotizacion(updated);
-    setAttachedMessage(`Transporte agregado a ${quote.numero || "la cotización"}.`);
-    setSelectedQuoteId("");
   };
   const saveForNextQuote = () => {
     if (!result) return;
-    saveDraft(`casasolar:transportePendiente:${currentUser.nombre}`, transportFromResult());
+    const transportItem = transportFromResult();
+    const identity = normalizeIdentity(currentUser?.email || currentUser?.nombre || "usuario");
+    saveDraft(`casasolar:transportePendiente:${identity}`, transportItem);
+    saveDraft(`casasolar:transportePendiente:${currentUser?.nombre || "usuario"}`, transportItem);
     setPendingSaved(true);
     setAttachedMessage("Transporte guardado. Aparecerá al crear tu próxima cotización.");
   };
@@ -592,7 +608,7 @@ function RouteCalculator({ cotizaciones, currentUser, onUpdateCotizacion }) {
                 <option value="">No adjuntar · Solo calcular</option>
                 {visibleQuotes.map(quote => <option key={quote.id} value={quote.id}>{quote.numero || "Sin número"} · {quote.contactoNombre || "Sin contacto"}</option>)}
               </select>
-              {selectedQuoteId && <button className="btn-primary" onClick={attachTransport}><Plus size={16} /> Agregar como transporte</button>}
+              {selectedQuoteId && <button className="btn-primary" disabled={attachingTransport} onClick={attachTransport}><Plus size={16} /> {attachingTransport ? "Guardando transporte…" : "Agregar como transporte"}</button>}
               {attachedMessage && <p className="form-success">{attachedMessage}</p>}
             </div>
           </>}
@@ -974,7 +990,11 @@ function ContactModal({ initial, vendedores, currentUser, onSave, onClose }) {
 function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, vendedores = [], initial, onSave, onClose }) {
   const itemEditorRef = useRef(null);
   const draftKey = `casasolar:draft:cotizacion:${initial?.id || initialContactId || "nueva"}`;
-  const pendingTransportKey = `casasolar:transportePendiente:${vendedor}`;
+  const pendingTransportKeys = [...new Set([
+    `casasolar:transportePendiente:${normalizeIdentity(currentUser?.email || currentUser?.nombre || vendedor || "usuario")}`,
+    `casasolar:transportePendiente:${currentUser?.nombre || ""}`,
+    `casasolar:transportePendiente:${vendedor || ""}`,
+  ].filter(key => !key.endsWith(":")))];
   const savedDraft = useMemo(() => readDraft(draftKey, {}), [draftKey]);
   const defaultAdvisor = useMemo(() => advisorProfile(vendedor, currentUser, vendedores), [vendedor, currentUser, vendedores]);
   const [contactoId, setContactoId] = useState(savedDraft.contactoId || initial?.contactoId || initialContactId || (contactos[0]?.id || ""));
@@ -1003,10 +1023,15 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
   const [productSearch, setProductSearch] = useState("");
   const [productCategory, setProductCategory] = useState("Todas");
   const [saving, setSaving] = useState(false);
-  const [pendingTransport, setPendingTransport] = useState(() => initial ? null : readDraft(pendingTransportKey, null));
+  const [pendingTransport, setPendingTransport] = useState(() => initial ? null : pendingTransportKeys.map(key => readDraft(key, null)).find(Boolean) || null);
   const clienteSeleccionado = contactos.find(c => c.id === contactoId);
   const esEstructura = String(prod).startsWith("estructura_");
-  const visibleProducts = CATALOGO.filter(item => (productCategory === "Todas" || item.categoria === productCategory) && (!productSearch.trim() || `${item.nombre} ${item.subcategoria || ""}`.toLowerCase().includes(productSearch.trim().toLowerCase()))).slice(0, 150);
+  const normalizedProductSearch = normalizeIdentity(productSearch);
+  const visibleProducts = CATALOGO.filter(item => {
+    const categoryMatches = normalizedProductSearch || productCategory === "Todas" || item.categoria === productCategory;
+    return categoryMatches && (!normalizedProductSearch || catalogSearchText(item).includes(normalizedProductSearch));
+  }).slice(0, 300);
+  const isFreeProduct = prod === "producto_libre";
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precioUnitario, 0);
   useEffect(() => {
@@ -1035,14 +1060,19 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
 
   const addItem = async () => {
     const p = Number(precio);
+    if (isFreeProduct && !descripcion.trim()) {
+      setItemMessage("Escribe el nombre del producto libre antes de agregarlo.");
+      return;
+    }
     if (precio === "" || Number.isNaN(p) || p < 0) {
       setItemMessage("Escribe un precio cotizado válido antes de guardar el producto.");
       return;
     }
     const wasEditing = Boolean(editingItemId);
+    const freeProductName = descripcion.trim();
     const nextItem = {
-      id: uid(), productoId: prod, productoNombre: productoNombre(prod), categoria: prod === "transporte_ruta" ? "Servicios" : categoria,
-      descripcion: descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
+      id: uid(), productoId: prod, productoNombre: isFreeProduct ? freeProductName : productoNombre(prod), categoria: prod === "transporte_ruta" ? "Servicios" : categoria,
+      descripcion: isFreeProduct ? freeProductName : descripcion.trim() || productoNombre(prod), tamano: tamano.trim(),
       altura: altura.trim(), compatibilidad: compatibilidad.trim(),
       cantidad: Math.max(1, Number(cant) || 1), precioLista: precioLista === "" ? p : Math.max(0, Number(precioLista) || 0), precioUnitario: p,
     };
@@ -1056,9 +1086,11 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
   };
 
   const editItem = (item) => {
-    setEditingItemId(item.id); setProd(item.productoId || CATALOGO[0].id); setCategoria(item.categoria || categoriaProducto(item.productoId));
+    const knownProduct = CATALOGO.some(product => product.id === item.productoId);
+    const editorProductId = knownProduct ? item.productoId : "producto_libre";
+    setEditingItemId(item.id); setProd(editorProductId); setCategoria(item.categoria || categoriaProducto(editorProductId));
     const savedDescription = String(item.descripcion || "").trim();
-    setDescripcion(savedDescription.toLowerCase() === productoNombre(item.productoId).toLowerCase() ? "" : savedDescription);
+    setDescripcion(editorProductId === "producto_libre" ? (savedDescription || item.productoNombre || item.nombre || "") : savedDescription.toLowerCase() === productoNombre(item.productoId).toLowerCase() ? "" : savedDescription);
     setTamano(item.tamano || ""); setCant(item.cantidad || 1);
     setAltura(item.altura || ""); setCompatibilidad(item.compatibilidad || "");
     setPrecioLista(item.precioLista ?? item.precioUnitario ?? ""); setPrecio(item.precioUnitario ?? item.precio ?? "");
@@ -1071,8 +1103,8 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
   };
   const addPendingTransport = () => {
     if (!pendingTransport) return;
-    setItems(list => [...list, { ...pendingTransport, id: pendingTransport.id || uid(), descripcion: "Transporte", tamano: "" }]);
-    clearDraft(pendingTransportKey);
+    setItems(list => [...list.filter(item => item.productoId !== "transporte_ruta"), { ...pendingTransport, id: pendingTransport.id || uid(), descripcion: "Transporte", tamano: "" }]);
+    pendingTransportKeys.forEach(clearDraft);
     setPendingTransport(null);
   };
 
@@ -1106,21 +1138,22 @@ function CotizacionModal({ contactos, initialContactId, vendedor, currentUser, v
           {pendingTransport && <div className="pending-transport-card"><div><ShoppingCart size={17} /><span><strong>Transporte calculado pendiente</strong><small>Importe: {fmtMoney(pendingTransport.precioUnitario)}. Los kilómetros y la tarifa permanecerán internos.</small></span></div><button className="btn-primary" onClick={addPendingTransport}><Plus size={16} /> Agregar a esta cotización</button></div>}
 
           <div ref={itemEditorRef} className={editingItemId ? "quote-item-editor editing" : "quote-item-editor"}>
-          <label className="field-label">{editingItemId ? "Editar producto seleccionado" : "Agregar producto o servicio"}</label>
+          <div className="row between"><label className="field-label">{editingItemId ? "Editar producto seleccionado" : "Agregar producto o servicio"}</label><button type="button" className="btn-ghost small" onClick={() => { setProd("producto_libre"); setCategoria("Otros"); setDescripcion(""); setProductSearch(""); setItemMessage("Producto libre: escribe el nombre y el precio cotizado."); }}><Plus size={14}/> Producto libre</button></div>
           {editingItemId && <div className="edit-product-banner"><Edit3 size={16}/><span>Modifica únicamente este producto y pulsa <strong>Actualizar producto</strong>. Después podrás seguir editando la cotización.</span></div>}
-          <div className="catalog-picker"><select className="input" value={productCategory} onChange={e=>setProductCategory(e.target.value)}>{CATALOGO_CATEGORIAS.map(category=><option key={category}>{category}</option>)}</select><input className="input" value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="Buscar en Kardex por nombre…"/></div>
+          <div className="catalog-picker"><select className="input" value={productCategory} onChange={e=>setProductCategory(e.target.value)}>{CATALOGO_CATEGORIAS.map(category=><option key={category}>{category}</option>)}</select><input className="input" value={productSearch} onChange={e=>{ setProductSearch(e.target.value); if (e.target.value.trim()) setProductCategory("Todas"); }} placeholder="Buscar en Kardex por nombre, código o categoría…"/></div>
+          {normalizedProductSearch && <p className={visibleProducts.length ? "catalog-search-status" : "form-error"}>{visibleProducts.length ? `${visibleProducts.length} producto(s) encontrado(s).` : "No encontramos coincidencias. Puedes usar “Producto libre” para agregarlo con el nombre y valor que necesites."}</p>}
           <div className="item-row quote-item-grid">
             <select className="input" aria-label="Producto del Kardex" value={prod} onChange={e => { const next = e.target.value; setProd(next); setCategoria(categoriaProducto(next)); setDescripcion(""); if (!String(next).startsWith("estructura_")) { setAltura(""); setCompatibilidad(""); } }}>
               {!visibleProducts.some(item=>item.id===prod) && CATALOGO.find(item=>item.id===prod) && <option value={prod}>{productoNombre(prod)}</option>}{visibleProducts.map(p => <option key={p.id} value={p.id}>{p.categoria} · {p.nombre}</option>)}
             </select>
-            <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Detalle adicional (opcional)" />
+            <input className="input" value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder={isFreeProduct ? "Nombre del producto *" : "Detalle adicional (opcional)"} />
             <input className="input" value={tamano} onChange={e => setTamano(e.target.value)} placeholder="Tamaño (ej. 25 tubos / 300 L)" />
             <input className="input qty" type="number" min="1" value={cant} onChange={e => setCant(e.target.value)} placeholder="Cant." />
             <input className="input price" type="number" min="0" value={precioLista} onChange={e => setPrecioLista(e.target.value)} placeholder="Precio lista Q" />
             <input className="input price" type="number" min="0" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="Precio cotizado Q" />
             <button type="button" disabled={saving} className={editingItemId ? "btn-primary small" : "btn-ghost small"} onClick={addItem}>{saving ? "Guardando…" : editingItemId ? <><CheckCircle2 size={14} /> Actualizar producto</> : <><Plus size={14} /> Agregar</>}</button>
           </div>
-          <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>El nombre se toma una sola vez del Kardex. Utiliza “Detalle adicional” únicamente para indicar modelo, marca o característica especial.</p></div>
+          <div className="quote-category-row"><label><span className="field-label">Categoría del producto</span><select className="input" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS_PRODUCTO.map(item => <option key={item}>{item}</option>)}</select></label><p>{isFreeProduct ? "Escribe el nombre libre, selecciona su categoría y coloca el precio. Se guardará únicamente en esta cotización." : "El nombre se toma una sola vez del Kardex. Utiliza “Detalle adicional” únicamente para indicar modelo, marca o característica especial."}</p></div>
           {esEstructura && <div className="row-2 structure-fields"><div><label className="field-label">Altura de la estructura</label><input className="input" value={altura} onChange={e => setAltura(e.target.value)} placeholder="Ej. 1.50 metros" /></div><div><label className="field-label">Compatible con / tamaño requerido</label><input className="input" value={compatibilidad} onChange={e => setCompatibilidad(e.target.value)} placeholder="Ej. CSP30, 30 tubos o depósito de 2,500 L" /></div></div>}
           {editingItemId && <button type="button" className="btn-ghost small cancel-item-edit" onClick={cancelItemEdit}><X size={14}/> Cancelar edición</button>}
           {itemMessage && <p className={itemMessage.startsWith("Escribe") ? "form-error" : "form-success"}>{itemMessage}</p>}
