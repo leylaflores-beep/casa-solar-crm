@@ -141,15 +141,19 @@ export async function replaceCRMUserEmail({ user, newEmail, changedBy }) {
 }
 
 export async function deleteCRMContact(contactId) {
-  const targets = ["contactos", "cotizaciones", "seguimientos", "campaigns"].map(name => doc(db, "crm_data", name));
-  await runTransaction(db, async transaction => {
-    const snapshots = await Promise.all(targets.map(target => transaction.get(target)));
-    const [contacts, quotes, followups, campaigns] = snapshots.map(snapshot => snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : []);
+  const target = doc(db, "crm_data", "contactos");
+  const backupTarget = doc(db, "crm_data", `contactos_backup_${new Date().toISOString().slice(0, 10)}`);
+  return runTransaction(db, async transaction => {
+    const [snapshot, backupSnapshot] = await Promise.all([transaction.get(target), transaction.get(backupTarget)]);
+    const contacts = snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : [];
+    if (!contacts.some(item => item.id === contactId)) return contacts;
     const now = new Date().toISOString();
-    transaction.set(targets[0], { value: contacts.filter(item => item.id !== contactId), updatedAt: now }, { merge: true });
-    transaction.set(targets[1], { value: quotes.filter(item => item.contactoId !== contactId), updatedAt: now }, { merge: true });
-    transaction.set(targets[2], { value: followups.filter(item => item.contactoId !== contactId), updatedAt: now }, { merge: true });
-    transaction.set(targets[3], { value: campaigns.map(campaign => ({ ...campaign, sends: (campaign.sends || []).filter(send => send.contactoId !== contactId) })), updatedAt: now }, { merge: true });
+    if (!backupSnapshot.exists() && contacts.length) {
+      transaction.set(backupTarget, { value: contacts.map(cleanForFirestore), createdAt: now, reason: "Respaldo automático antes de retirar un contacto" });
+    }
+    const next = contacts.filter(item => item.id !== contactId);
+    transaction.set(target, { value: next, updatedAt: now }, { merge: true });
+    return next;
   });
 }
 
@@ -188,6 +192,9 @@ export async function getSharedData(key) {
 }
 
 export async function setSharedData(key, value) {
+  if (documentName(key) === "contactos" && (!Array.isArray(value) || value.length === 0)) {
+    throw new Error("Protección activa: una lista vacía no puede reemplazar los contactos de Firebase.");
+  }
   await setDoc(doc(db, "crm_data", documentName(key)), {
     value,
     updatedAt: new Date().toISOString(),
@@ -210,14 +217,42 @@ export async function upsertSharedDataRecords(key, records) {
   if (!incoming.length) return [];
   const target = doc(db, "crm_data", documentName(key));
   return runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(target);
+    const isContacts = documentName(key) === "contactos";
+    const backupTarget = isContacts ? doc(db, "crm_data", `contactos_backup_${new Date().toISOString().slice(0, 10)}`) : null;
+    const [snapshot, backupSnapshot] = await Promise.all([
+      transaction.get(target),
+      backupTarget ? transaction.get(backupTarget) : Promise.resolve(null),
+    ]);
     const current = snapshot.exists() && Array.isArray(snapshot.data().value) ? snapshot.data().value : [];
     const byId = new Map(current.map(item => [item.id, item]));
     incoming.forEach(item => byId.set(item.id, { ...(byId.get(item.id) || {}), ...item, actualizadoEn: new Date().toISOString() }));
     const incomingIds = new Set(incoming.map(item => item.id));
     const next = [...incoming.map(item => byId.get(item.id)), ...current.filter(item => !incomingIds.has(item.id))];
+    if (backupTarget && !backupSnapshot?.exists() && current.length) {
+      transaction.set(backupTarget, { value: current.map(cleanForFirestore), createdAt: new Date().toISOString(), reason: "Respaldo diario automático de contactos" });
+    }
     transaction.set(target, { value: next, updatedAt: new Date().toISOString() }, { merge: true });
     return next;
+  });
+}
+
+export async function recoverCRMContacts() {
+  const snapshots = await getDocs(collection(db, "crm_data"));
+  const backups = snapshots.docs
+    .filter(item => item.id.startsWith("contactos_backup_") && Array.isArray(item.data().value))
+    .sort((a, b) => String(b.data().createdAt || b.id).localeCompare(String(a.data().createdAt || a.id)));
+  const target = doc(db, "crm_data", "contactos");
+  return runTransaction(db, async transaction => {
+    const currentSnapshot = await transaction.get(target);
+    const current = currentSnapshot.exists() && Array.isArray(currentSnapshot.data().value) ? currentSnapshot.data().value : [];
+    const ids = new Set(current.map(item => item.id));
+    const recovered = [];
+    backups.forEach(backup => backup.data().value.forEach(item => {
+      if (item?.id && !ids.has(item.id)) { ids.add(item.id); recovered.push(cleanForFirestore(item)); }
+    }));
+    const next = [...current, ...recovered];
+    if (recovered.length) transaction.set(target, { value: next, updatedAt: new Date().toISOString(), recoveredAt: new Date().toISOString() }, { merge: true });
+    return { value: next, recovered: recovered.length, backups: backups.length };
   });
 }
 

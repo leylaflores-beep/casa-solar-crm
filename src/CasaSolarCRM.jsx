@@ -18,6 +18,7 @@ import {
   observeAuth,
   profileFromFirebaseUser,
   replaceCRMUserEmail,
+  recoverCRMContacts,
   savePublicCampaign,
   sendCRMPasswordReset,
   setCRMUserActive,
@@ -147,7 +148,7 @@ const CANALES = [
 
 const ESTADOS_CONTACTO = ["Nuevo", "Cliente anterior", "Contactado", "Cotizado", "En negociación", "Ganado", "Perdido"];
 const ESTADOS_COTIZACION = ["Pendiente", "Enviada", "Aceptada", "Rechazada"];
-const CRM_VERSION = "v75";
+const CRM_VERSION = "v76";
 const CATALOG_LINK_SECTIONS = ["Calentadores solares", "Iluminación", "Accesorios y otros productos"];
 const RH_SECTION_DEFINITIONS = [
   { nombre: "Capacitación Inicial", categorias: ["Administrativo", "Ventas", "Técnico"] },
@@ -1681,7 +1682,7 @@ function CotizacionActions({ cotizacion, contacto, currentUser, vendedores, onUp
   );
 }
 
-function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onAssign, onOpen }) {
+function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, onAssign, onOpen, onRecover }) {
   const isBoss = isContactBoss(currentUser);
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
@@ -1709,6 +1710,7 @@ function ContactosView({ contactos, vendedores, currentUser, onAdd, onImport, on
           <p>Llamadas entrantes y contactos por redes sociales.</p>
         </div>
         <div className="row">
+          {isBoss && <button className="btn-ghost" onClick={onRecover}><ShieldCheck size={16} /> Auditar y recuperar</button>}
           <button className="btn-ghost" onClick={() => setShowImport(true)}><Upload size={16} /> Importar Excel</button>
           <button className="btn-primary" onClick={() => setShowModal(true)}><Plus size={16} /> Nuevo contacto</button>
         </div>
@@ -2749,19 +2751,50 @@ export default function CasaSolarCRM() {
   const deleteContactoDefinitivo = async (contacto) => {
     const linkedQuotes = cotizaciones.filter(item => item.contactoId === contacto.id).length;
     const linkedFollowups = seguimientos.filter(item => item.contactoId === contacto.id).length;
-    const confirmation = window.prompt(`Esta acción es permanente. Se eliminará a ${contacto.nombre}, junto con ${linkedQuotes} cotización(es)/orden(es) y ${linkedFollowups} seguimiento(s). Escribe ELIMINAR para confirmar:`);
-    if (confirmation !== "ELIMINAR") return;
+    const confirmation = window.confirm(`¿Retirar a ${contacto.nombre} de la lista activa? Sus ${linkedQuotes} cotización(es)/orden(es) y ${linkedFollowups} seguimiento(s) se conservarán. Jefatura podrá recuperarlo desde el respaldo.`);
+    if (!confirmation) return;
     try {
-      await deleteCRMContact(contacto.id);
-      setContactos(current => current.filter(item => item.id !== contacto.id));
-      setCotizaciones(current => current.filter(item => item.contactoId !== contacto.id));
-      setSeguimientos(current => current.filter(item => item.contactoId !== contacto.id));
-      setCampaigns(current => current.map(campaign => ({ ...campaign, sends: (campaign.sends || []).filter(send => send.contactoId !== contacto.id) })));
+      setContactos(await deleteCRMContact(contacto.id));
       setSelectedId(null);
-      window.alert(`${contacto.nombre} y toda su información relacionada fueron eliminados definitivamente.`);
+      window.alert(`${contacto.nombre} fue retirado de la lista activa. Su historial y el respaldo permanecen guardados.`);
     } catch (error) {
-      console.error("No se pudo eliminar el contacto:", error);
-      window.alert("No se pudo eliminar el contacto. No se hizo una eliminación parcial; revisa la conexión e inténtalo nuevamente.");
+      console.error("No se pudo retirar el contacto:", error);
+      window.alert("No se pudo retirar el contacto. No se hizo ningún cambio; revisa la conexión e inténtalo nuevamente.");
+    }
+  };
+  const recoverContactos = async () => {
+    if (!window.confirm("El CRM comparará la lista actual con los respaldos y las cotizaciones. Solo agregará contactos ausentes; no reemplazará información vigente. ¿Continuar?")) return;
+    try {
+      const backupResult = await recoverCRMContacts();
+      let current = backupResult.value;
+      const ids = new Set(current.map(item => item.id));
+      const reconstructed = cotizaciones.filter(item => item.contactoId && !ids.has(item.contactoId)).map(item => {
+        ids.add(item.contactoId);
+        const cliente = item.cliente || {};
+        return {
+          id: item.contactoId,
+          nombre: cliente.nombre || item.contactoNombre || "Contacto recuperado",
+          telefono: cliente.telefono || item.telefonoCliente || "",
+          email: cliente.email || "",
+          dpi: cliente.dpi || "",
+          nit: cliente.nit || "C/F",
+          direccion: cliente.direccion || "",
+          municipio: cliente.municipio || "",
+          departamento: cliente.departamento || "",
+          vendedor: item.vendedor || "",
+          propietarioEmail: item.vendedorEmail || "",
+          estado: "Cotizado",
+          canal: "Base histórica",
+          creadoEn: item.creadoEn || new Date().toISOString(),
+          recuperadoDesde: `Cotización ${item.numero || item.id}`,
+        };
+      });
+      if (reconstructed.length) current = await upsertSharedDataRecords("casasolar:contactos", reconstructed);
+      setContactos(current);
+      window.alert(`Auditoría terminada. Respaldos encontrados: ${backupResult.backups}. Recuperados desde respaldo: ${backupResult.recovered}. Reconstruidos desde cotizaciones: ${reconstructed.length}. Total actual: ${current.length}.`);
+    } catch (error) {
+      console.error("No se pudo auditar los contactos:", error);
+      window.alert("No se pudo completar la auditoría. No se reemplazó la lista actual.");
     }
   };
   const assignContactos = async (ids, seller) => {
@@ -3008,7 +3041,7 @@ export default function CasaSolarCRM() {
             {tab === "calculadora-estructuras" && canUseStructureCalculator(currentUser) && <StructureCalculator />}
             {tab === "contactos" && !selectedContact && (
               <ContactosView contactos={contactos} vendedores={vendedores} currentUser={currentUser}
-                onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onOpen={setSelectedId} />
+                onAdd={addContacto} onImport={importContactos} onAssign={assignContactos} onRecover={recoverContactos} onOpen={setSelectedId} />
             )}
             {tab === "contactos" && selectedContact && (
               <ContactDetail contacto={selectedContact} cotizaciones={cotizaciones} seguimientos={seguimientos}
